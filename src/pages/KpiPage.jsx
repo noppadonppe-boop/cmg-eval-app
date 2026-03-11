@@ -772,11 +772,12 @@ export default function KpiPage() {
   )
   const isExecOrHR = ['HR', 'HRM', 'GM', 'MD'].includes(role)
 
+  // ถ้าเป็น supervisor ของใครก็ตาม ให้แสดงฟอร์มกำหนด KPI และรายชื่อ staff (รวมถึง HR ที่เป็น supervisor)
   let view
-  if (isExecOrHR) {
-    view = <OverviewView />
-  } else if (isSupervisor) {
+  if (isSupervisor) {
     view = <SupervisorView />
+  } else if (isExecOrHR) {
+    view = <OverviewView />
   } else if (isAssignedAsStaff) {
     view = <StaffView />
   } else {

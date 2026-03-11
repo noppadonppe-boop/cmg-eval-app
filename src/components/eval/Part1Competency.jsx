@@ -86,7 +86,7 @@ export const COMPETENCY_LIST = [
 ]
 
 export const PART1_MAX_RAW = COMPETENCY_LIST.length * 20
-export const PART1_WEIGHTS = { Staff: 0.20, Supervisor: 0.50, Stakeholder: 0.30 }
+export const PART1_WEIGHTS = { Staff: 0.20, Supervisor: 0.50, Stakeholder: 0.30, HR: 0.50 }
 
 function commentRequired(score) {
   return score < 10 || score > 18
@@ -267,11 +267,15 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
     const saved_staff = allP1.find((e) => e.evaluatorRole === 'Staff')
     const saved_sup   = allP1.find((e) => e.evaluatorRole === 'Supervisor')
     const saved_stake = allP1.find((e) => e.evaluatorRole === 'Stakeholder')
-    if (!saved_staff && !saved_sup && !saved_stake) return null
+    const saved_hr    = allP1.find((e) => e.evaluatorRole === 'HR')
+    if (!saved_staff && !saved_sup && !saved_stake && !saved_hr) return null
     const sRaw = saved_staff?.rawTotal ?? 0
     const supRaw = saved_sup?.rawTotal ?? 0
     const stRaw = saved_stake?.rawTotal ?? 0
-    const weighted = sRaw * 0.20 + supRaw * 0.50 + stRaw * 0.30
+    const hrRaw = saved_hr?.rawTotal ?? 0
+    // สูตรปกติ: Staff 20% + Supervisor 50% + Stakeholder 30%; ถ้ามี HR ใช้แทน Supervisor เมื่อไม่มี Sup
+    const effectiveSup = saved_sup ? supRaw : (saved_hr ? hrRaw : 0)
+    const weighted = sRaw * 0.20 + effectiveSup * 0.50 + stRaw * 0.30
     return Math.round((weighted / maxRaw) * 30 * 100) / 100
   })()
 
@@ -355,8 +359,8 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
       {previewWeighted !== null && (
         <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl border border-indigo-200 px-5 py-4">
           <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide mb-3">สรุปคะแนน Part 1 (ถ่วงน้ำหนัก)</p>
-          <div className="grid grid-cols-3 gap-3 mb-3">
-            {(['Staff', 'Supervisor', 'Stakeholder']).map((role) => {
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+            {(['Staff', 'Supervisor', 'Stakeholder', 'HR']).map((role) => {
               const e = allP1.find((x) => x.evaluatorRole === role)
               const w = PART1_WEIGHTS[role]
               return (

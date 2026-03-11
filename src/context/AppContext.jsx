@@ -1,4 +1,5 @@
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useState, useEffect, useRef } from 'react'
+import { subscribeToRoot, writeRoot, seedIfEmpty, persistUpdate, hasConfig } from '../services/firestoreService'
 
 const INITIAL_DATA = {
   users: [
@@ -28,14 +29,64 @@ const INITIAL_DATA = {
 const AppContext = createContext(null)
 
 export function AppProvider({ children }) {
-  const [data, setData] = useState(INITIAL_DATA)
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
   const [currentUser, setCurrentUser] = useState(INITIAL_DATA.users[0])
   const [selectedYear, setSelectedYear] = useState(2025)
+  const initialCurrentUserSet = useRef(false)
 
-  const updateData = (updater) => setData((prev) => updater(prev))
+  // Optimistic update + Transaction: อัปเดต UI ทันที แล้วเขียนแบบ merge กับข้อมูลล่าสุดใน Firestore
+  // ไม่ให้การบันทึกของคนหนึ่งเขียนทับข้อมูลที่อีกคนกำลังกรอก/บันทึก
+  const setDataAndPersist = (updater) => {
+    setData((prev) => updater(prev))
+    if (hasConfig) {
+      persistUpdate(updater).catch((e) => console.error('Firestore write error:', e))
+    }
+  }
+
+  const updateData = (updater) => setDataAndPersist(updater)
+
+  useEffect(() => {
+    if (!hasConfig) {
+      setData(INITIAL_DATA)
+      setLoading(false)
+      return
+    }
+    let done = false
+    const fallbackTimer = setTimeout(() => {
+      if (done) return
+      setData((prev) => prev ?? INITIAL_DATA)
+      setLoading(false)
+    }, 8000)
+    const unsub = subscribeToRoot((remote) => {
+      if (remote === null) {
+        seedIfEmpty(INITIAL_DATA).then(() => {})
+        return
+      }
+      const isEmpty = !remote.users?.length && !remote.evaluationYears?.length
+      if (isEmpty) {
+        seedIfEmpty(INITIAL_DATA).then(() => {})
+        return
+      }
+      done = true
+      setData(remote)
+      if (!initialCurrentUserSet.current && remote.users?.length) {
+        initialCurrentUserSet.current = true
+        const first = remote.users[0]
+        setCurrentUser((prev) => remote.users.find((u) => u.id === prev?.id) || first)
+      }
+      setLoading(false)
+    })
+    return () => {
+      done = true
+      clearTimeout(fallbackTimer)
+      unsub()
+    }
+  }, [])
 
   const addYear = (newYear) => {
-    setData((prev) => {
+    setDataAndPersist((prev) => {
+      if (!prev) return prev
       if (prev.evaluationYears.includes(newYear)) return prev
       const lastYear = Math.max(...prev.evaluationYears)
       const clonedConfigs = prev.staffConfigs
@@ -54,63 +105,63 @@ export function AppProvider({ children }) {
   }
 
   const addStaffConfig = (config) => {
-    setData((prev) => ({
+    setDataAndPersist((prev) => ({
       ...prev,
-      staffConfigs: [...prev.staffConfigs, { ...config, id: `cfg_${Date.now()}` }],
+      staffConfigs: [...(prev?.staffConfigs ?? []), { ...config, id: `cfg_${Date.now()}` }],
     }))
   }
 
   const updateStaffConfig = (id, updates) => {
-    setData((prev) => ({
+    setDataAndPersist((prev) => ({
       ...prev,
-      staffConfigs: prev.staffConfigs.map((c) => (c.id === id ? { ...c, ...updates } : c)),
+      staffConfigs: (prev?.staffConfigs ?? []).map((c) => (c.id === id ? { ...c, ...updates } : c)),
     }))
   }
 
   const removeStaffConfig = (id) => {
-    setData((prev) => ({
+    setDataAndPersist((prev) => ({
       ...prev,
-      staffConfigs: prev.staffConfigs.filter((c) => c.id !== id),
+      staffConfigs: (prev?.staffConfigs ?? []).filter((c) => c.id !== id),
     }))
   }
 
   const addUser = (user) => {
-    setData((prev) => ({
+    setDataAndPersist((prev) => ({
       ...prev,
-      users: [...prev.users, { ...user, id: `u_${Date.now()}` }],
+      users: [...(prev?.users ?? []), { ...user, id: `u_${Date.now()}` }],
     }))
   }
 
   const updateUser = (id, updates) => {
-    setData((prev) => ({
+    setDataAndPersist((prev) => ({
       ...prev,
-      users: prev.users.map((u) => (u.id === id ? { ...u, ...updates } : u)),
+      users: (prev?.users ?? []).map((u) => (u.id === id ? { ...u, ...updates } : u)),
     }))
   }
 
   const removeUser = (id) => {
-    setData((prev) => ({
+    setDataAndPersist((prev) => ({
       ...prev,
-      users: prev.users.filter((u) => u.id !== id),
+      users: (prev?.users ?? []).filter((u) => u.id !== id),
     }))
   }
 
   const getConfigForStaff = (staffId, year) =>
-    data.staffConfigs.find((c) => c.staffId === staffId && c.year === year) || null
+    (data?.staffConfigs ?? []).find((c) => c.staffId === staffId && c.year === year) || null
 
   const getStaffForSupervisor = (supervisorId, year) =>
-    data.staffConfigs
+    (data?.staffConfigs ?? [])
       .filter((c) => c.supervisorId === supervisorId && c.year === year)
-      .map((c) => data.users.find((u) => u.id === c.staffId))
+      .map((c) => (data?.users ?? []).find((u) => u.id === c.staffId))
       .filter(Boolean)
 
-  const getUserById = (id) => data.users.find((u) => u.id === id) || null
+  const getUserById = (id) => (data?.users ?? []).find((u) => u.id === id) || null
 
   const addKpi = (kpi) => {
-    setData((prev) => ({
+    setDataAndPersist((prev) => ({
       ...prev,
       kpis: [
-        ...prev.kpis,
+        ...(prev?.kpis ?? []),
         {
           id: `kpi_${Date.now()}`,
           status: 'Pending',
@@ -123,22 +174,23 @@ export function AppProvider({ children }) {
   }
 
   const updateKpi = (id, updates) => {
-    setData((prev) => ({
+    setDataAndPersist((prev) => ({
       ...prev,
-      kpis: prev.kpis.map((k) => (k.id === id ? { ...k, ...updates } : k)),
+      kpis: (prev?.kpis ?? []).map((k) => (k.id === id ? { ...k, ...updates } : k)),
     }))
   }
 
   const removeKpi = (id) => {
-    setData((prev) => ({
+    setDataAndPersist((prev) => ({
       ...prev,
-      kpis: prev.kpis.filter((k) => k.id !== id),
+      kpis: (prev?.kpis ?? []).filter((k) => k.id !== id),
     }))
   }
 
   const saveEvaluation = (evalRecord) => {
-    setData((prev) => {
-      const idx = prev.quarterlyEvaluations.findIndex(
+    setDataAndPersist((prev) => {
+      const evals = prev?.quarterlyEvaluations ?? []
+      const idx = evals.findIndex(
         (e) =>
           e.year === evalRecord.year &&
           e.quarter === evalRecord.quarter &&
@@ -147,14 +199,14 @@ export function AppProvider({ children }) {
           e.part === evalRecord.part
       )
       if (idx >= 0) {
-        const updated = [...prev.quarterlyEvaluations]
+        const updated = [...evals]
         updated[idx] = { ...updated[idx], ...evalRecord, updatedAt: new Date().toISOString() }
         return { ...prev, quarterlyEvaluations: updated }
       }
       return {
         ...prev,
         quarterlyEvaluations: [
-          ...prev.quarterlyEvaluations,
+          ...evals,
           { id: `eval_${Date.now()}`, createdAt: new Date().toISOString(), ...evalRecord },
         ],
       }
@@ -162,7 +214,7 @@ export function AppProvider({ children }) {
   }
 
   const getEvaluation = (year, quarter, staffId, evaluatorId, part) =>
-    data.quarterlyEvaluations.find(
+    (data?.quarterlyEvaluations ?? []).find(
       (e) =>
         e.year === year &&
         e.quarter === quarter &&
@@ -171,15 +223,36 @@ export function AppProvider({ children }) {
         e.part === part
     ) || null
 
+  /** สำหรับ Part 2 (วินัย): หา record ตาม staff/quarter/part เท่านั้น (ไม่สน evaluatorId) เพื่อให้ Supervisor/Staff ดูข้อมูลที่ HR กรอกได้ */
+  const getEvaluationForPart = (year, quarter, staffId, part) =>
+    (data?.quarterlyEvaluations ?? []).find(
+      (e) =>
+        e.year === year &&
+        e.quarter === quarter &&
+        e.staffId === staffId &&
+        e.part === part
+    ) || null
+
   const respondKpi = (id, response, reason = '') => {
-    setData((prev) => ({
+    setDataAndPersist((prev) => ({
       ...prev,
-      kpis: prev.kpis.map((k) =>
+      kpis: (prev?.kpis ?? []).map((k) =>
         k.id === id
           ? { ...k, status: response, rejectReason: reason, respondedAt: new Date().toISOString() }
           : k
       ),
     }))
+  }
+
+  if (loading || data === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="inline-block w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+          <p className="text-gray-600 font-medium">กำลังโหลด...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -207,6 +280,7 @@ export function AppProvider({ children }) {
         respondKpi,
         saveEvaluation,
         getEvaluation,
+        getEvaluationForPart,
       }}
     >
       {children}

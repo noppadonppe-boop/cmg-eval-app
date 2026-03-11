@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "cmg-performance-system"
+  },
+  "targets": {
+    "cmg-performance-system": {
+      "hosting": {
+        "site-01": [
+          "cmg-performance-system"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

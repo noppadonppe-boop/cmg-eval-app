@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useApp } from '../../context/AppContext'
 import { ROLE_AVATAR_BG } from '../../hooks/useRBAC'
 import {
@@ -301,8 +301,13 @@ function buildInitial(existing) {
 }
 
 export default function Part2Discipline({ staffId, quarter, year }) {
-  const { currentUser, saveEvaluation, getEvaluation, getUserById } = useApp()
-  const existing = getEvaluation(year, quarter, staffId, currentUser.id, 'part2')
+  const { currentUser, saveEvaluation, getEvaluation, getEvaluationForPart, getUserById } = useApp()
+  const isHR = currentUser?.role === 'HR'
+  const isHRM = currentUser?.role === 'MD'  // MD acts as HRM approver
+  // HR โหลด/บันทึกด้วย evaluatorId ตัวเอง; Supervisor/Staff ดูข้อมูลที่ HR กรอก (โหลดจาก part2 ตาม staff/quarter)
+  const existing = isHR
+    ? getEvaluation(year, quarter, staffId, currentUser.id, 'part2')
+    : getEvaluationForPart(year, quarter, staffId, 'part2')
 
   const [months, setMonths] = useState(() => buildInitial(existing))
   const [hrmApproved, setHrmApproved] = useState(existing?.hrmApproved ?? false)
@@ -310,8 +315,17 @@ export default function Part2Discipline({ staffId, quarter, year }) {
   const [saved, setSaved] = useState(!!existing)
 
   const staff = getUserById(staffId)
-  const isHR = currentUser?.role === 'HR'
-  const isHRM = currentUser?.role === 'MD'  // MD acts as HRM approver
+  const readOnly = !isHR && !isHRM  // Supervisor และ Staff ดูได้อย่างเดียว แก้ไขไม่ได้
+
+  // โหลดข้อมูล Part 2 ที่ HR กรอก (เมื่อเป็น readOnly และมี existing จาก getEvaluationForPart)
+  useEffect(() => {
+    if (readOnly && existing) {
+      setMonths(buildInitial(existing))
+      setHrmApproved(existing.hrmApproved ?? false)
+      setHrmRemark(existing.hrmRemark ?? '')
+      setSaved(true)
+    }
+  }, [readOnly, existing?.id, staffId, quarter, year])
 
   const monthNames = MONTHS_IN_QUARTER[quarter] || ['เดือน 1', 'เดือน 2', 'เดือน 3']
 
@@ -374,7 +388,10 @@ export default function Part2Discipline({ staffId, quarter, year }) {
             <p className="text-sm font-semibold text-gray-900">{staff?.name}</p>
             <div className="flex items-center gap-1.5 mt-0.5">
               <Shield size={11} className="text-green-600" />
-              <p className="text-xs text-green-700 font-medium">Part 2 — วินัย (HR กรอก / HRM อนุมัติ)</p>
+              <p className="text-xs text-green-700 font-medium">
+                Part 2 — วินัย (HR กรอก / HRM อนุมัติ)
+                {readOnly && <span className="ml-1.5 text-gray-500 font-normal">· ดูได้อย่างเดียว</span>}
+              </p>
             </div>
           </div>
         </div>
@@ -398,8 +415,16 @@ export default function Part2Discipline({ staffId, quarter, year }) {
       {/* Criteria guide (collapsible) */}
       <CriteriaGuide />
 
+      {/* แจ้ง Supervisor/Staff ว่าดูได้อย่างเดียว */}
+      {readOnly && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-gray-100 border border-gray-200 text-gray-600">
+          <Lock size={14} className="shrink-0 text-gray-500" />
+          <p className="text-xs font-medium">ข้อมูลขาด/ลามาสาย — ดูได้อย่างเดียว (HR เป็นผู้กรอกและแก้ไข)</p>
+        </div>
+      )}
+
       {/* HR save / edit buttons */}
-      {isHR && !hrmApproved && (
+      {isHR && !hrmApproved && !readOnly && (
         <div className="flex gap-2 justify-end">
           {saved && (
             <button
@@ -440,7 +465,7 @@ export default function Part2Discipline({ staffId, quarter, year }) {
             monthName={monthNames[idx]}
             data={months[mk]}
             onUpdate={(val) => updateMonth(mk, val)}
-            disabled={!isHR || hrmApproved}
+            disabled={readOnly || !isHR || hrmApproved}
             vacationQuota={months[mk].vacationQuota}
           />
         ))}
@@ -479,8 +504,8 @@ export default function Part2Discipline({ staffId, quarter, year }) {
         </div>
       )}
 
-      {/* HRM approval section */}
-      {saved && !hrmApproved && (isHRM || isHR) && (
+      {/* HRM approval section (เฉพาะ HR/HRM ไม่แสดงในโหมด read-only) */}
+      {saved && !hrmApproved && !readOnly && (isHRM || isHR) && (
         <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-4 space-y-3">
           <div className="flex items-center gap-2">
             <Shield size={14} className="text-amber-600" />

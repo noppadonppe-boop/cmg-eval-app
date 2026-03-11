@@ -1,0 +1,10 @@
+rules_version = '2';
+// โครงสร้าง: Collection CMG-eval-app > Document root (ข้อมูลรวมทุก user/anonymous)
+// ต้องการให้ทุกคนอ่าน/เขียนที่เดียวกัน ไม่แยกโฟลเดอร์
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /CMG-eval-app/root {
+      allow read, write: if true;
+    }
+  }
+}

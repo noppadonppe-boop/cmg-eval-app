@@ -102,8 +102,8 @@ function useEvalAccess() {
   let evaluatorRole = 'Staff'
 
   if (role === 'HR' || role === 'HRM') {
-    // HR/HRM: discipline input for all staff
-    parts = ['part2']
+    // HR/HRM: Part 1 Competency + Part 2 Discipline สำหรับ staff ทั้งหมด
+    parts = ['part1', 'part2']
     staffList = yearConfigs
       .map((c) => data.users.find((u) => u.id === c.staffId))
       .filter(Boolean)
@@ -126,12 +126,14 @@ function useEvalAccess() {
 
     if (isAssignedAsStaff) {
       partSet.add('part1')
+      partSet.add('part2')  // Staff ดูขาด/ลามาสาย (ที่ HR กรอก) ได้แต่แก้ไขไม่ได้
       partSet.add('part3')
       partSet.add('part4')
       staffMap.set(currentUser.id, currentUser)
     }
     if (isSupervisor) {
       partSet.add('part1')
+      partSet.add('part2')  // Supervisor ดูขาด/ลามาสายของลูกน้องได้แต่แก้ไขไม่ได้
       partSet.add('part3')
       partSet.add('part4')
       supervisedStaff.forEach((u) => staffMap.set(u.id, u))
