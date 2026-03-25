@@ -1,10 +1,44 @@
 rules_version = '2';
-// โครงสร้าง: Collection CMG-eval-app > Document root (ข้อมูลรวมทุก user/anonymous)
-// ต้องการให้ทุกคนอ่าน/เขียนที่เดียวกัน ไม่แยกโฟลเดอร์
+// Firestore Security Rules for CMG Performance Evaluation
+// โครงสร้าง:
+//   Collection: CMG-eval-app > Document: root       → app data (users, kpis, etc.)
+//   SubCollection: CMG-eval-app/root/users/{uid}    → auth user profiles
+//   SubCollection: CMG-eval-app/root/appMeta/{id}   → first user config
+//   SubCollection: CMG-eval-app/root/activityLogs/{id} → activity logs
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Root document (app data - kpis, staffConfigs, quarterlyEvaluations, etc.)
     match /CMG-eval-app/root {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // User profiles sub-collection
+    match /CMG-eval-app/root/users/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // App meta config (first user detection)
+    match /CMG-eval-app/root/appMeta/{docId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Activity logs
+    match /CMG-eval-app/root/activityLogs/{docId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // Any other sub-documents under root
+    match /CMG-eval-app/root/{sub}/{docId} {
+      allow read, write: if request.auth != null;
+    }
+    match /CMG-eval-app/root/{sub}/{docId}/{rest=**} {
+      allow read, write: if request.auth != null;
     }
   }
 }

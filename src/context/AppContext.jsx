@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { subscribeToRoot, writeRoot, seedIfEmpty, persistUpdate, hasConfig } from '../services/firestoreService'
+import { useAuth } from './AuthContext'
 
 const INITIAL_DATA = {
   users: [
@@ -26,17 +27,54 @@ const INITIAL_DATA = {
   quarterlyEvaluations: [],
 }
 
+/** ลำดับความสำคัญของ Role สำหรับเลือก primary role */
+const ROLE_PRIORITY = ['MasterAdmin', 'MD', 'GM', 'HRM', 'HR', 'Creator', 'Staff', 'Viewer']
+
+function getPrimaryRole(roles) {
+  if (!Array.isArray(roles) || !roles.length) return 'Staff'
+  for (const r of ROLE_PRIORITY) {
+    if (roles.includes(r)) return r
+  }
+  return roles[0]
+}
+
 const AppContext = createContext(null)
 
 export function AppProvider({ children }) {
+  const { userProfile, authLoading } = useAuth()
+
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [currentUser, setCurrentUser] = useState(INITIAL_DATA.users[0])
-  const [selectedYear, setSelectedYear] = useState(2025)
   const initialCurrentUserSet = useRef(false)
 
-  // Optimistic update + Transaction: อัปเดต UI ทันที แล้วเขียนแบบ merge กับข้อมูลล่าสุดใน Firestore
-  // ไม่ให้การบันทึกของคนหนึ่งเขียนทับข้อมูลที่อีกคนกำลังกรอก/บันทึก
+  // Derive currentUser from Firebase auth profile, or fall back to mock user
+  const buildAuthUser = (profile) => {
+    if (!profile) return null
+    return {
+      id: profile.uid,
+      name: [profile.firstName, profile.lastName].filter(Boolean).join(' ') || profile.email || 'User',
+      role: getPrimaryRole(profile.roles),
+      roles: profile.roles || ['Staff'],
+      staffCode: profile.staffCode || '',
+      photoURL: profile.photoURL || '',
+      jdUrl: '',
+    }
+  }
+
+  const [currentUser, setCurrentUser] = useState(
+    userProfile ? buildAuthUser(userProfile) : INITIAL_DATA.users[0]
+  )
+  const [selectedYear, setSelectedYear] = useState(2025)
+
+  // Sync currentUser when auth profile changes
+  useEffect(() => {
+    if (!hasConfig) return
+    if (userProfile) {
+      setCurrentUser(buildAuthUser(userProfile))
+    }
+  }, [userProfile?.uid, userProfile?.roles?.join(), userProfile?.firstName, userProfile?.lastName])
+
+  // Persist to Firestore (Transaction-based to prevent overwrites)
   const setDataAndPersist = (updater) => {
     setData((prev) => updater(prev))
     if (hasConfig) {
@@ -70,10 +108,9 @@ export function AppProvider({ children }) {
       }
       done = true
       setData(remote)
-      if (!initialCurrentUserSet.current && remote.users?.length) {
+      if (!initialCurrentUserSet.current && remote.users?.length && !userProfile) {
         initialCurrentUserSet.current = true
-        const first = remote.users[0]
-        setCurrentUser((prev) => remote.users.find((u) => u.id === prev?.id) || first)
+        setCurrentUser(remote.users[0])
       }
       setLoading(false)
     })
@@ -86,16 +123,11 @@ export function AppProvider({ children }) {
 
   const addYear = (newYear) => {
     setDataAndPersist((prev) => {
-      if (!prev) return prev
-      if (prev.evaluationYears.includes(newYear)) return prev
+      if (!prev || prev.evaluationYears.includes(newYear)) return prev
       const lastYear = Math.max(...prev.evaluationYears)
       const clonedConfigs = prev.staffConfigs
         .filter((c) => c.year === lastYear)
-        .map((c) => ({
-          ...c,
-          id: `cfg_${Date.now()}_${c.staffId}`,
-          year: newYear,
-        }))
+        .map((c) => ({ ...c, id: `cfg_${Date.now()}_${c.staffId}`, year: newYear }))
       return {
         ...prev,
         evaluationYears: [...prev.evaluationYears, newYear].sort((a, b) => a - b),
@@ -162,13 +194,7 @@ export function AppProvider({ children }) {
       ...prev,
       kpis: [
         ...(prev?.kpis ?? []),
-        {
-          id: `kpi_${Date.now()}`,
-          status: 'Pending',
-          rejectReason: '',
-          createdAt: new Date().toISOString(),
-          ...kpi,
-        },
+        { id: `kpi_${Date.now()}`, status: 'Pending', rejectReason: '', createdAt: new Date().toISOString(), ...kpi },
       ],
     }))
   }
@@ -223,14 +249,9 @@ export function AppProvider({ children }) {
         e.part === part
     ) || null
 
-  /** สำหรับ Part 2 (วินัย): หา record ตาม staff/quarter/part เท่านั้น (ไม่สน evaluatorId) เพื่อให้ Supervisor/Staff ดูข้อมูลที่ HR กรอกได้ */
   const getEvaluationForPart = (year, quarter, staffId, part) =>
     (data?.quarterlyEvaluations ?? []).find(
-      (e) =>
-        e.year === year &&
-        e.quarter === quarter &&
-        e.staffId === staffId &&
-        e.part === part
+      (e) => e.year === year && e.quarter === quarter && e.staffId === staffId && e.part === part
     ) || null
 
   const respondKpi = (id, response, reason = '') => {
@@ -244,7 +265,8 @@ export function AppProvider({ children }) {
     }))
   }
 
-  if (loading || data === null) {
+  // Show loading while Firebase auth or app data is loading
+  if (authLoading || loading || data === null) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">

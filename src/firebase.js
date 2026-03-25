@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
+import { getAuth, GoogleAuthProvider } from 'firebase/auth'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -11,18 +12,21 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 }
 
-// Only initialize if we have required config (avoid white screen on missing .env)
-const hasConfig = firebaseConfig.apiKey && firebaseConfig.projectId
+const hasConfig = !!(firebaseConfig.apiKey && firebaseConfig.projectId)
 let app = null
 let db = null
+let auth = null
+const googleProvider = new GoogleAuthProvider()
+googleProvider.setCustomParameters({ prompt: 'select_account' })
 
 if (hasConfig) {
   try {
     app = initializeApp(firebaseConfig)
     db = getFirestore(app)
+    auth = getAuth(app)
   } catch (e) {
     console.error('Firebase init error:', e)
   }
 }
 
-export { app, db, hasConfig }
+export { app, db, auth, googleProvider, hasConfig }

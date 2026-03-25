@@ -159,19 +159,28 @@ const COLOR_MAP = {
   red:    { activeTab: 'bg-red-600 text-white border-red-600',       border: 'border-l-red-500',    header: 'bg-red-50 border-red-100' },
 }
 
+const VALID_TAB_IDS = new Set(['staff', 'hr', 'hrm', 'gm', 'md'])
+
+function resolveTabKey(role) {
+  const key = ROLE_META[role]?.tabKey
+  if (key && VALID_TAB_IDS.has(key)) return key
+  // MasterAdmin, Viewer, Creator → default to 'staff'
+  return 'staff'
+}
+
 export default function ManualPage() {
   const { currentUser } = useApp()
-  const defaultTab = ROLE_META[currentUser?.role]?.tabKey || 'staff'
+  const defaultTab = resolveTabKey(currentUser?.role)
   const [activeTab, setActiveTab] = useState(defaultTab)
   const [showMatrix, setShowMatrix] = useState(false)
 
   useEffect(() => {
-    const tab = ROLE_META[currentUser?.role]?.tabKey
-    if (tab) setActiveTab(tab)
+    const tab = resolveTabKey(currentUser?.role)
+    setActiveTab(tab)
   }, [currentUser?.role])
 
-  const content = MANUAL_CONTENT[activeTab]
-  const colors = COLOR_MAP[content.color]
+  const content = MANUAL_CONTENT[activeTab] || MANUAL_CONTENT['staff']
+  const colors = COLOR_MAP[content?.color] || COLOR_MAP['blue']
 
   const activeTabMeta = TABS.find((t) => t.id === activeTab)
   const isMyRole = ROLE_META[currentUser?.role]?.tabKey === activeTab
