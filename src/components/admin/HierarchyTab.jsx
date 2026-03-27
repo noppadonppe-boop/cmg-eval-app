@@ -1,16 +1,48 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useApp } from '../../context/AppContext'
 import { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG, CAN_BE_SUPERVISOR_ROLES, CAN_BE_STAKEHOLDER_ROLES } from '../../hooks/useRBAC'
 import { PlusCircle, Pencil, Trash2, Check, X, AlertCircle, Users, User, Briefcase, ChevronDown } from 'lucide-react'
+import { subscribeAllUsers } from '../../services/authService'
 
 const BLANK_FORM = { staffId: '', supervisorId: '', stakeholderIds: [], leaveQuota: 15 }
+
+function getUserDisplayName(user) {
+  if (!user) return ''
+  if (user.name) return user.name
+  if (user.firstName && user.lastName) return `${user.firstName} ${user.lastName}`
+  if (user.firstName) return user.firstName
+  return user.email || 'User'
+}
+
+function getUserPrimaryRole(user) {
+  if (!user) return 'Staff'
+  if (user.role) return user.role
+  if (Array.isArray(user.roles) && user.roles.length > 0) {
+    const rolePriority = ['MasterAdmin', 'MD', 'GM', 'HRM', 'HR', 'Creator', 'Staff', 'Viewer']
+    for (const r of rolePriority) {
+      if (user.roles.includes(r)) return r
+    }
+    return user.roles[0]
+  }
+  return 'Staff'
+}
+
+function normalizeUser(firebaseUser) {
+  return {
+    ...firebaseUser,
+    id: firebaseUser.uid || firebaseUser.id,
+    name: getUserDisplayName(firebaseUser),
+    role: getUserPrimaryRole(firebaseUser),
+  }
+}
 
 function Avatar({ user, size = 'sm' }) {
   if (!user) return null
   const s = size === 'sm' ? 'w-6 h-6 text-xs' : 'w-8 h-8 text-sm'
+  const displayName = getUserDisplayName(user)
   return (
     <div className={`${s} rounded-full ${ROLE_AVATAR_BG[user.role] || 'bg-gray-400'} flex items-center justify-center text-white font-bold shrink-0`}>
-      {user.name.charAt(0)}
+      {displayName.charAt(0)}
     </div>
   )
 }
@@ -71,23 +103,30 @@ export default function HierarchyTab() {
   const [editingId, setEditingId] = useState(null)
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [firebaseUsers, setFirebaseUsers] = useState([])
+
+  useEffect(() => {
+    const unsub = subscribeAllUsers((users) => {
+      const normalized = users.map(normalizeUser)
+      setFirebaseUsers(normalized)
+    })
+    return unsub
+  }, [])
 
   const yearConfigs = data.staffConfigs.filter((c) => c.year === selectedYear)
 
-  // Any non-MD user can be evaluated as "staff" (be assigned in staffConfig)
-  const evaluatableUsers = data.users.filter((u) => u.role !== 'MD')
-  // Any non-MD user can be assigned as supervisor
-  const supervisorCandidates = data.users.filter((u) => CAN_BE_SUPERVISOR_ROLES.includes(u.role))
-  // Any non-MD user can be assigned as stakeholder
-  const stakeholderCandidates = data.users.filter((u) => CAN_BE_STAKEHOLDER_ROLES.includes(u.role))
+  const allUsers = firebaseUsers.length > 0 ? firebaseUsers : data.users.map(normalizeUser)
 
-  // Staff already assigned in this year (excluding the one being edited)
+  const evaluatableUsers = allUsers.filter((u) => u.role === 'Staff')
+  const supervisorCandidates = allUsers.filter((u) => u.role !== 'Staff')
+  const stakeholderCandidates = allUsers.filter((u) => u.role !== 'Staff')
+
   const assignedStaffIds = yearConfigs
     .filter((c) => c.id !== editingId)
     .map((c) => c.staffId)
   const availableStaff = evaluatableUsers.filter((u) => !assignedStaffIds.includes(u.id))
 
-  const getUserById = (id) => data.users.find((u) => u.id === id)
+  const getUserById = (id) => allUsers.find((u) => u.id === id)
 
   const handleSubmit = () => {
     if (!form.staffId) { setError('Select a staff member.'); return }
@@ -160,7 +199,11 @@ export default function HierarchyTab() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-sm font-semibold text-gray-900">{editingId ? 'แก้ไข Assignment' : 'กำหนด Supervisor / Stakeholder ให้พนักงาน'}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">ปี: <strong className="text-indigo-600">{selectedYear}</strong></p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              ปี: <strong className="text-indigo-600">{selectedYear}</strong> | 
+              Staff: <strong className="text-indigo-600">{evaluatableUsers.length} คน</strong> |
+              Supervisor/Stakeholder: <strong className="text-indigo-600">{supervisorCandidates.length} คน</strong>
+            </p>
           </div>
           {editingId && (
             <button onClick={handleCancel} className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-100">
@@ -179,7 +222,7 @@ export default function HierarchyTab() {
           {/* Staff */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-              <span className="flex items-center gap-1"><User size={12} /> Staff Member *</span>
+              <span className="flex items-center gap-1"><User size={12} /> Staff Member (Role: Staff) *</span>
             </label>
             <select
               value={form.staffId}
@@ -195,7 +238,7 @@ export default function HierarchyTab() {
               ))}
             </select>
             {availableStaff.length === 0 && !editingId && (
-              <p className="text-xs text-amber-600 mt-1">พนักงานทุกคนถูก Assign แล้วสำหรับปี {selectedYear}</p>
+              <p className="text-xs text-amber-600 mt-1">Staff Member ทั้งหมด ({evaluatableUsers.length} คน) ถูก Assign แล้วสำหรับปี {selectedYear}</p>
             )}
           </div>
 
