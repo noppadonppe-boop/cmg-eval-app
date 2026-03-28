@@ -22,7 +22,6 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
   const [error, setError] = useState('')
 
   const staff = getUserById(staffId)
-  const isReadOnly = !!existing && saved
   const needsComment = COMMENT_REQUIRED(score)
 
   const handleSave = () => {
@@ -41,11 +40,6 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
       scaledScore: score,
     })
     setSaved(true)
-  }
-
-  const handleEdit = () => {
-    setSaved(false)
-    setError('')
   }
 
   return (
@@ -95,13 +89,9 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
               <span className="text-sm font-medium text-gray-400 ml-1">/ 20</span>
             </p>
           </div>
-          {saved ? (
-            <button onClick={handleEdit} className="px-4 py-2 border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50">แก้ไข</button>
-          ) : (
-            <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white text-sm font-semibold rounded-lg hover:bg-purple-700">
-              <Save size={14} /> บันทึก
-            </button>
-          )}
+          <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white text-sm font-semibold rounded-lg hover:bg-purple-700">
+            <Save size={14} /> บันทึก
+          </button>
         </div>
       </div>
 
@@ -138,7 +128,7 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
         comment={comment}
         onScoreChange={(v) => { setSaved(false); setScore(v); setError('') }}
         onCommentChange={(v) => { setSaved(false); setComment(v); setError('') }}
-        disabled={isReadOnly}
+        disabled={false}
       />
 
       {/* Scoring guide */}

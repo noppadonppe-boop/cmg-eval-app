@@ -2,8 +2,10 @@ import { useState } from 'react'
 import { useApp } from '../../context/AppContext'
 import { PlusCircle, CalendarDays, Copy, CheckCircle2, AlertCircle } from 'lucide-react'
 
+const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4']
+
 export default function YearsTab() {
-  const { data, addYear, selectedYear, setSelectedYear } = useApp()
+  const { data, addYear, selectedYear, setSelectedYear, activeQuarter, setActiveQuarter } = useApp()
   const [input, setInput] = useState('')
   const [toast, setToast] = useState(null)
 
@@ -26,6 +28,7 @@ export default function YearsTab() {
     const cloneCount = data.staffConfigs.filter((c) => c.year === lastYear).length
     addYear(yr)
     setSelectedYear(yr)
+    setActiveQuarter('Q1')
     setInput('')
     showToast(`Year ${yr} created. ${cloneCount} staff config(s) cloned from ${lastYear}.`)
   }
@@ -103,6 +106,30 @@ export default function YearsTab() {
                       <span className="text-xs text-gray-500">{kpiCount} KPI(s)</span>
                       <span className="text-xs text-gray-400">·</span>
                       <span className="text-xs text-gray-500">{evalCount} evaluation(s)</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                      <span className="text-[11px] text-gray-400 font-medium">Quarter:</span>
+                      <div className="flex gap-1.5">
+                        {QUARTERS.map((q) => {
+                          const isActive = isSelected && q === activeQuarter
+                          return (
+                            <button
+                              key={q}
+                              onClick={() => { setSelectedYear(yr); setActiveQuarter(q) }}
+                              className={`px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all ${
+                                isActive
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400'
+                              }`}
+                            >
+                              {q}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {isSelected && (
+                        <span className="text-[11px] font-semibold px-2 py-1 bg-indigo-100 text-indigo-700 rounded-full">Active: {activeQuarter}</span>
+                      )}
                     </div>
                   </div>
                 </div>

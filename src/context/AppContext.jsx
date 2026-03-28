@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef } from 'react'
-import { subscribeToRoot, writeRoot, seedIfEmpty, persistUpdate, hasConfig } from '../services/firestoreService'
+import { subscribeToRoot, seedIfEmpty, persistUpdate, hasConfig } from '../services/firestoreService'
 import { useAuth } from './AuthContext'
 
 const INITIAL_DATA = {
@@ -13,6 +13,8 @@ const INITIAL_DATA = {
     { id: 'u7', name: 'MD F',      role: 'MD',    staffCode: 'EMP007', jdUrl: '' },
   ],
   evaluationYears: [2025, 2026],
+  activeYear: 2026,
+  activeQuarter: 'Q1',
   staffConfigs: [
     {
       id: 'cfg_1',
@@ -64,7 +66,50 @@ export function AppProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(
     userProfile ? buildAuthUser(userProfile) : INITIAL_DATA.users[0]
   )
-  const [selectedYear, setSelectedYear] = useState(2025)
+
+  const getEffectiveActiveYear = (d) => {
+    const years = Array.isArray(d?.evaluationYears) ? d.evaluationYears : []
+    if (years.length === 0) return null
+    const fallback = Math.max(...years)
+    const ay = typeof d?.activeYear === 'number' ? d.activeYear : fallback
+    return years.includes(ay) ? ay : fallback
+  }
+
+  const getEffectiveActiveQuarter = (d) => {
+    const q = String(d?.activeQuarter || '').toUpperCase()
+    return q === 'Q1' || q === 'Q2' || q === 'Q3' || q === 'Q4' ? q : 'Q1'
+  }
+
+  const canManageYears = (user) => {
+    const roles = Array.isArray(user?.roles) ? user.roles : [user?.role || 'Staff']
+    return roles.some((r) => r === 'HR' || r === 'HRM' || r === 'GM' || r === 'MasterAdmin')
+  }
+
+  const selectedYear = getEffectiveActiveYear(data)
+  const activeQuarter = getEffectiveActiveQuarter(data)
+
+  const setSelectedYear = (year) => {
+    if (!canManageYears(currentUser)) return
+    const yr = typeof year === 'number' ? year : parseInt(String(year), 10)
+    if (!yr) return
+    setDataAndPersist((prev) => {
+      if (!prev) return prev
+      if (!Array.isArray(prev.evaluationYears) || !prev.evaluationYears.includes(yr)) return prev
+      if (prev.activeYear === yr) return prev
+      return { ...prev, activeYear: yr }
+    })
+  }
+
+  const setActiveQuarter = (q) => {
+    if (!canManageYears(currentUser)) return
+    const next = String(q || '').toUpperCase()
+    if (!(next === 'Q1' || next === 'Q2' || next === 'Q3' || next === 'Q4')) return
+    setDataAndPersist((prev) => {
+      if (!prev) return prev
+      if (prev.activeQuarter === next) return prev
+      return { ...prev, activeQuarter: next }
+    })
+  }
 
   // Sync currentUser when auth profile changes
   useEffect(() => {
@@ -86,7 +131,7 @@ export function AppProvider({ children }) {
 
   useEffect(() => {
     if (!hasConfig) {
-      setData(INITIAL_DATA)
+      setData((prev) => prev ?? INITIAL_DATA)
       setLoading(false)
       return
     }
@@ -106,8 +151,24 @@ export function AppProvider({ children }) {
         seedIfEmpty(INITIAL_DATA).then(() => {})
         return
       }
+      const normalizedActiveYear = getEffectiveActiveYear(remote)
+      if (normalizedActiveYear !== remote.activeYear) {
+        persistUpdate((cur) => {
+          const curEffective = getEffectiveActiveYear(cur)
+          if (curEffective === cur.activeYear) return cur
+          return { ...cur, activeYear: curEffective }
+        }).catch(() => {})
+      }
+      const normalizedActiveQuarter = getEffectiveActiveQuarter(remote)
+      if (normalizedActiveQuarter !== remote.activeQuarter) {
+        persistUpdate((cur) => {
+          const curEffective = getEffectiveActiveQuarter(cur)
+          if (curEffective === cur.activeQuarter) return cur
+          return { ...cur, activeQuarter: curEffective }
+        }).catch(() => {})
+      }
       done = true
-      setData(remote)
+      setData({ ...remote, activeYear: normalizedActiveYear, activeQuarter: normalizedActiveQuarter })
       if (!initialCurrentUserSet.current && remote.users?.length && !userProfile) {
         initialCurrentUserSet.current = true
         setCurrentUser(remote.users[0])
@@ -137,24 +198,67 @@ export function AppProvider({ children }) {
   }
 
   const addStaffConfig = (config) => {
-    setDataAndPersist((prev) => ({
-      ...prev,
-      staffConfigs: [...(prev?.staffConfigs ?? []), { ...config, id: `cfg_${Date.now()}` }],
-    }))
+    const id = config?.id || `cfg_${Date.now()}_${Math.random().toString(16).slice(2)}`
+    setDataAndPersist((prev) => {
+      if (!prev) return prev
+      const prevCfgs = prev?.staffConfigs ?? []
+      const staffId = config?.staffId
+      const year = config?.year
+      if (prevCfgs.some((c) => c.id === id)) return prev
+      if (!staffId || !year) return prev
+      const existingIdx = prevCfgs.findIndex((c) => c.staffId === staffId && c.year === year)
+      if (existingIdx >= 0) {
+        const updated = [...prevCfgs]
+        updated[existingIdx] = { ...updated[existingIdx], ...config, id: updated[existingIdx].id }
+        return { ...prev, staffConfigs: updated }
+      }
+      return {
+        ...prev,
+        staffConfigs: [...prevCfgs, { ...config, id }],
+      }
+    })
   }
 
-  const updateStaffConfig = (id, updates) => {
-    setDataAndPersist((prev) => ({
-      ...prev,
-      staffConfigs: (prev?.staffConfigs ?? []).map((c) => (c.id === id ? { ...c, ...updates } : c)),
-    }))
+  const updateStaffConfig = (key, updates) => {
+    setDataAndPersist((prev) => {
+      if (!prev) return prev
+      const cfgs = prev?.staffConfigs ?? []
+      if (typeof key === 'string') {
+        return {
+          ...prev,
+          staffConfigs: cfgs.map((c) => (c.id === key ? { ...c, ...updates } : c)),
+        }
+      }
+      const staffId = key?.staffId
+      const year = key?.year
+      if (!staffId || !year) return prev
+      return {
+        ...prev,
+        staffConfigs: cfgs.map((c) => (
+          c.staffId === staffId && c.year === year ? { ...c, ...updates } : c
+        )),
+      }
+    })
   }
 
-  const removeStaffConfig = (id) => {
-    setDataAndPersist((prev) => ({
-      ...prev,
-      staffConfigs: (prev?.staffConfigs ?? []).filter((c) => c.id !== id),
-    }))
+  const removeStaffConfig = (key) => {
+    setDataAndPersist((prev) => {
+      if (!prev) return prev
+      const cfgs = prev?.staffConfigs ?? []
+      if (typeof key === 'string') {
+        return {
+          ...prev,
+          staffConfigs: cfgs.filter((c) => c.id !== key),
+        }
+      }
+      const staffId = key?.staffId
+      const year = key?.year
+      if (!staffId || !year) return prev
+      return {
+        ...prev,
+        staffConfigs: cfgs.filter((c) => !(c.staffId === staffId && c.year === year)),
+      }
+    })
   }
 
   const addUser = (user) => {
@@ -190,13 +294,20 @@ export function AppProvider({ children }) {
   const getUserById = (id) => (data?.users ?? []).find((u) => u.id === id) || null
 
   const addKpi = (kpi) => {
-    setDataAndPersist((prev) => ({
-      ...prev,
-      kpis: [
-        ...(prev?.kpis ?? []),
-        { id: `kpi_${Date.now()}`, status: 'Pending', rejectReason: '', createdAt: new Date().toISOString(), ...kpi },
-      ],
-    }))
+    const id = kpi?.id || `kpi_${Date.now()}_${Math.random().toString(16).slice(2)}`
+    const createdAt = kpi?.createdAt || new Date().toISOString()
+    setDataAndPersist((prev) => {
+      if (!prev) return prev
+      const prevKpis = prev?.kpis ?? []
+      if (prevKpis.some((x) => x.id === id)) return prev
+      return {
+        ...prev,
+        kpis: [
+          ...prevKpis,
+          { ...kpi, id, status: 'Pending', rejectReason: '', createdAt },
+        ],
+      }
+    })
   }
 
   const updateKpi = (id, updates) => {
@@ -265,6 +376,16 @@ export function AppProvider({ children }) {
     }))
   }
 
+  const resetEvaluationsForYear = (year) => {
+    const yr = typeof year === 'number' ? year : parseInt(String(year), 10)
+    if (!yr) return
+    setDataAndPersist((prev) => ({
+      ...prev,
+      kpis: (prev?.kpis ?? []).filter((k) => k.year !== yr),
+      quarterlyEvaluations: (prev?.quarterlyEvaluations ?? []).filter((e) => e.year !== yr),
+    }))
+  }
+
   // Show loading while Firebase auth or app data is loading
   if (authLoading || loading || data === null) {
     return (
@@ -285,6 +406,8 @@ export function AppProvider({ children }) {
         setCurrentUser,
         selectedYear,
         setSelectedYear,
+        activeQuarter,
+        setActiveQuarter,
         updateData,
         addYear,
         addStaffConfig,
@@ -300,6 +423,7 @@ export function AppProvider({ children }) {
         updateKpi,
         removeKpi,
         respondKpi,
+        resetEvaluationsForYear,
         saveEvaluation,
         getEvaluation,
         getEvaluationForPart,

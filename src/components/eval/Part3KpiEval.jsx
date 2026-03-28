@@ -57,7 +57,7 @@ function ScoreSlider({ value, onChange, disabled, label, maxScore }) {
 // ─── Staff self-scoring panel ─────────────────────────────────────────────────
 
 function StaffScoringPanel({ staffId, quarter, year }) {
-  const { data, currentUser, saveEvaluation, getEvaluation, respondKpi } = useApp()
+  const { data, saveEvaluation, getEvaluation, respondKpi } = useApp()
 
   const myKpis = data.kpis.filter(
     (k) => k.staffId === staffId && k.year === year && k.quarter === quarter
@@ -446,7 +446,7 @@ function SupervisorScoringPanel({ staffId, quarter, year }) {
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
-export default function Part3KpiEval({ staffId, quarter, year, evaluatorRole, isSupervisor }) {
+export default function Part3KpiEval({ staffId, quarter, year, isSupervisor }) {
   // isSupervisor = true when the current user is assigned as supervisorId for this staff in staffConfig
   if (isSupervisor) {
     return <SupervisorScoringPanel staffId={staffId} quarter={quarter} year={year} />

@@ -6,9 +6,9 @@ import {
   updateProfile,
 } from 'firebase/auth'
 import {
-  doc, getDoc, setDoc, collection, query, where,
+  doc, getDoc, collection, query, where,
   getDocs, updateDoc, serverTimestamp, runTransaction,
-  addDoc, onSnapshot, deleteDoc,
+  addDoc, onSnapshot,
 } from 'firebase/firestore'
 import { auth, db, googleProvider, hasConfig } from '../firebase'
 
@@ -18,6 +18,16 @@ export const ROOT_DOC_ID = 'root'
 export const ALL_ROLES = [
   'Staff', 'HR', 'HRM', 'GM', 'MD', 'MasterAdmin', 'Viewer', 'Creator',
 ]
+
+function derivePositionsFromRoles(roles = []) {
+  const r = Array.isArray(roles) ? roles : []
+  const hasStaff = r.includes('Staff')
+  const hasNonStaff = r.some((x) => x && x !== 'Staff')
+  if (hasStaff && hasNonStaff) return ['Staff', 'Supervisor']
+  if (hasStaff) return ['Staff']
+  if (hasNonStaff) return ['Supervisor']
+  return ['Staff']
+}
 
 // ── Firestore refs ─────────────────────────────────────────────────────────────
 const userDocRef = (uid) => doc(db, APP_NAME, ROOT_DOC_ID, 'users', uid)
@@ -60,6 +70,7 @@ async function createUserProfile(firebaseUser, extra = {}) {
       lastName: extra.lastName || firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
       position: extra.position || '',
       roles: isFirst ? ['MasterAdmin'] : ['Staff'],
+      positions: isFirst ? ['Supervisor'] : derivePositionsFromRoles(['Staff']),
       status: isFirst ? 'approved' : 'pending',
       assignedProjects: [],
       photoURL: firebaseUser.photoURL || '',

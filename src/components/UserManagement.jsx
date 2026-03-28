@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { subscribeAllUsers, updateUserProfile, ALL_ROLES } from '../services/authService'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -46,9 +46,55 @@ function Avatar({ user, size = 10 }) {
 // ── Role Multi-Select Dropdown ────────────────────────────────────────────────
 function RoleMultiSelect({ selected = [], onChange }) {
   const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ left: 0, width: 0, top: 0, bottom: null, maxHeight: 256 })
+  const anchorRef = useRef(null)
   const toggle = (r) => onChange(selected.includes(r) ? selected.filter(x => x !== r) : [...selected, r])
+
+  useEffect(() => {
+    if (!open) return
+
+    const update = () => {
+      const el = anchorRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const margin = 6
+      const viewportH = window.innerHeight || 0
+      const belowSpace = Math.max(0, viewportH - rect.bottom - margin)
+      const aboveSpace = Math.max(0, rect.top - margin)
+      const openUp = belowSpace < 220 && aboveSpace > belowSpace
+      const available = openUp ? aboveSpace : belowSpace
+      const maxHeight = Math.max(140, Math.min(320, available))
+
+      if (openUp) {
+        setPos({
+          left: rect.left,
+          width: rect.width,
+          top: 0,
+          bottom: viewportH - rect.top + margin,
+          maxHeight,
+        })
+      } else {
+        setPos({
+          left: rect.left,
+          width: rect.width,
+          top: rect.bottom + margin,
+          bottom: null,
+          maxHeight,
+        })
+      }
+    }
+
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [open])
+
   return (
-    <div className="relative">
+    <div className="relative" ref={anchorRef}>
       <button type="button" onClick={() => setOpen(v => !v)}
         className="w-full flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-left hover:border-gray-400 transition-colors">
         <div className="flex-1 flex flex-wrap gap-1 min-h-[1.25rem]">
@@ -62,8 +108,17 @@ function RoleMultiSelect({ selected = [], onChange }) {
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-xl py-1.5 overflow-hidden">
+          <div className="fixed inset-0 z-[9998]" onClick={() => setOpen(false)} />
+          <div
+            className="fixed z-[9999] bg-white border border-gray-200 rounded-xl shadow-2xl py-1.5 overflow-y-auto"
+            style={{
+              left: pos.left,
+              width: pos.width,
+              top: pos.bottom == null ? pos.top : undefined,
+              bottom: pos.bottom == null ? undefined : pos.bottom,
+              maxHeight: pos.maxHeight,
+            }}
+          >
             {ALL_ROLES.map((r) => (
               <label key={r} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer">
                 <input type="checkbox" checked={selected.includes(r)} onChange={() => toggle(r)}

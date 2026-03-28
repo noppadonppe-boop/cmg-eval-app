@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useApp } from '../context/AppContext'
 import useRBAC, { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../hooks/useRBAC'
+import { subscribeAllUsers } from '../services/authService'
 import {
   Target, PlusCircle, CheckCircle2, XCircle, Clock, Pencil, Trash2,
   AlertCircle, Check, X, ChevronDown, ChevronUp, Filter, Eye, Save,
@@ -29,6 +30,35 @@ const STATUS_STYLES = {
 
 const BLANK_FORM = {
   staffId: '', title: '', assessmentMethod: '', remark: '', quarter: 'Q1',
+}
+
+function getUserDisplayName(user) {
+  if (!user) return ''
+  if (user.name) return user.name
+  if (user.firstName && user.lastName) return `${user.firstName} ${user.lastName}`
+  if (user.firstName) return user.firstName
+  return user.email || 'User'
+}
+
+function getUserPrimaryRole(user) {
+  if (!user) return 'Staff'
+  if (user.role) return user.role
+  if (Array.isArray(user.roles) && user.roles.length > 0) {
+    const rolePriority = ['MasterAdmin', 'MD', 'GM', 'HRM', 'HR', 'Creator', 'Staff', 'Viewer']
+    for (const r of rolePriority) {
+      if (user.roles.includes(r)) return r
+    }
+    return user.roles[0]
+  }
+  return 'Staff'
+}
+
+function normalizeAnyUser(u) {
+  if (!u) return null
+  const id = u.id || u.uid
+  const name = u.name || getUserDisplayName(u)
+  const role = u.role || getUserPrimaryRole(u)
+  return { ...u, id, name, role }
 }
 
 function StatusBadge({ status }) {
@@ -75,7 +105,7 @@ function ScoreSlider({ value, onChange, disabled, label, maxScore }) {
 
 // ─── Supervisor View ─────────────────────────────────────────────────────────
 
-function SupervisorView() {
+function SupervisorView({ allUsers }) {
   const { data, selectedYear, currentUser, addKpi, updateKpi, removeKpi, saveEvaluation, getEvaluation } = useApp()
   const [form, setForm] = useState(BLANK_FORM)
   const [editingId, setEditingId] = useState(null)
@@ -85,11 +115,17 @@ function SupervisorView() {
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [scoringKpiId, setScoringKpiId] = useState(null)
   const [supScores, setSupScores] = useState({})
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [drafts, setDrafts] = useState([])
+  const [sending, setSending] = useState(false)
+  const sendingRef = useRef(false)
+
+  const getUserById = (id) => allUsers.find((u) => u.id === id)
 
   const myConfigs = data.staffConfigs.filter(
     (c) => c.supervisorId === currentUser.id && c.year === selectedYear
   )
-  const myStaff = myConfigs.map((c) => data.users.find((u) => u.id === c.staffId)).filter(Boolean)
+  const myStaff = myConfigs.map((c) => getUserById(c.staffId)).filter(Boolean)
 
   const myKpis = data.kpis.filter(
     (k) => k.year === selectedYear && k.supervisorId === currentUser.id
@@ -100,20 +136,32 @@ function SupervisorView() {
       (k) => k.year === selectedYear && k.staffId === staffId && k.quarter === quarter && k.id !== excludeId
     ).length
 
-  const validate = () => {
+  const existingCount = form.staffId ? countInQuarter(form.staffId, form.quarter, editingId) : 0
+  const remainingSlots = Math.max(0, KPI_MAX_PER_QUARTER - existingCount)
+  const canSend = !editingId && remainingSlots > 0 && drafts.length === remainingSlots
+  const canAddDraft = !editingId && remainingSlots > 0 && drafts.length < remainingSlots
+
+  const validateEdit = () => {
     const e = {}
     if (!form.staffId) e.staffId = 'เลือกพนักงาน'
     if (!form.title.trim()) e.title = 'ระบุงานที่มอบหมาย'
     if (!form.assessmentMethod.trim()) e.assessmentMethod = 'ระบุวิธีการประเมิน'
-    if (!editingId && countInQuarter(form.staffId, form.quarter) >= KPI_MAX_PER_QUARTER) {
-      e.quota = `มี KPI ครบ ${KPI_MAX_PER_QUARTER} ข้อแล้วใน ${form.quarter}`
-    }
     setErrors(e)
     return Object.keys(e).length === 0
   }
 
-  const handleSubmit = () => {
-    if (!validate()) return
+  const validateDraft = () => {
+    const e = {}
+    if (!form.staffId) e.staffId = 'เลือกพนักงาน'
+    if (!form.title.trim()) e.title = 'ระบุงานที่มอบหมาย'
+    if (!form.assessmentMethod.trim()) e.assessmentMethod = 'ระบุวิธีการประเมิน'
+    if (!editingId && remainingSlots <= 0) e.quota = `มี KPI ครบ ${KPI_MAX_PER_QUARTER} ข้อแล้วใน ${form.quarter}`
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
+
+  const saveEdit = () => {
+    if (!validateEdit()) return
     const payload = {
       staffId: form.staffId,
       title: form.title.trim(),
@@ -121,26 +169,77 @@ function SupervisorView() {
       remark: form.remark.trim(),
       quarter: form.quarter,
     }
-    if (editingId) {
-      updateKpi(editingId, { ...payload, status: 'Pending', rejectReason: '' })
-    } else {
-      addKpi({ year: selectedYear, supervisorId: currentUser.id, ...payload })
+    updateKpi(editingId, { ...payload, status: 'Pending', rejectReason: '' })
+    closeAssign()
+  }
+
+  const addDraft = () => {
+    if (sendingRef.current) return
+    if (!canAddDraft) return
+    if (!validateDraft()) return
+    const draft = {
+      id: `draft_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      staffId: form.staffId,
+      quarter: form.quarter,
+      title: form.title.trim(),
+      assessmentMethod: form.assessmentMethod.trim(),
+      remark: form.remark.trim(),
     }
-    setForm(BLANK_FORM)
-    setEditingId(null)
+    setDrafts((prev) => [...prev, draft])
+    setForm((prev) => ({ ...prev, title: '', assessmentMethod: '', remark: '' }))
     setErrors({})
+  }
+
+  const removeDraft = (id) => {
+    setDrafts((prev) => prev.filter((d) => d.id !== id))
+  }
+
+  const sendDrafts = () => {
+    if (sendingRef.current) return
+    if (!canSend) return
+    sendingRef.current = true
+    setSending(true)
+    drafts.forEach((d) => {
+      addKpi({
+        year: selectedYear,
+        supervisorId: currentUser.id,
+        staffId: d.staffId,
+        title: d.title,
+        assessmentMethod: d.assessmentMethod,
+        remark: d.remark,
+        quarter: d.quarter,
+      })
+    })
+    closeAssign()
+    sendingRef.current = false
+    setSending(false)
   }
 
   const handleEdit = (kpi) => {
     setForm({ staffId: kpi.staffId, title: kpi.title, assessmentMethod: kpi.assessmentMethod || '', remark: kpi.remark || '', quarter: kpi.quarter })
     setEditingId(kpi.id)
     setErrors({})
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    setDrafts([])
+    setAssignOpen(true)
   }
 
-  const handleCancel = () => { setForm(BLANK_FORM); setEditingId(null); setErrors({}) }
+  const openAssign = (staffId) => {
+    setForm({ ...BLANK_FORM, staffId, quarter: filterQuarter })
+    setEditingId(null)
+    setErrors({})
+    setDrafts([])
+    setAssignOpen(true)
+  }
 
-  const getUserById = (id) => data.users.find((u) => u.id === id)
+  const closeAssign = () => {
+    setForm(BLANK_FORM)
+    setEditingId(null)
+    setErrors({})
+    setDrafts([])
+    setAssignOpen(false)
+    sendingRef.current = false
+    setSending(false)
+  }
 
   // Scoring: Supervisor scores accepted KPIs at end of quarter
   const openScoring = (staffId, quarter) => {
@@ -171,6 +270,10 @@ function SupervisorView() {
   }
 
   const filteredByQuarter = myKpis.filter(k => k.quarter === filterQuarter && (filterStaff === 'all' || k.staffId === filterStaff))
+  const assignedInModal = myKpis
+    .filter((k) => k.staffId === form.staffId && k.quarter === form.quarter)
+    .slice()
+    .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))
 
   if (myStaff.length === 0) {
     return (
@@ -194,86 +297,6 @@ function SupervisorView() {
         </div>
       </div>
 
-      {/* Assign Form */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">{editingId ? 'แก้ไข KPI' : 'มอบหมาย KPI ใหม่'}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">ปี: <strong className="text-indigo-600">{selectedYear}</strong> · สูงสุด {KPI_MAX_PER_QUARTER} ข้อ/คน/Quarter</p>
-          </div>
-          {editingId && (
-            <button onClick={handleCancel} className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 px-2.5 py-1.5 rounded-lg hover:bg-gray-100">
-              <X size={13} /> ยกเลิก
-            </button>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Staff */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">พนักงาน *</label>
-            <select value={form.staffId} onChange={(e) => setForm({ ...form, staffId: e.target.value })}
-              className={`w-full px-3 py-2 rounded-lg border text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 ${errors.staffId ? 'border-red-400' : 'border-gray-300'}`}>
-              <option value="">— เลือกพนักงาน —</option>
-              {myStaff.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
-            {errors.staffId && <p className="text-xs text-red-500 mt-1">{errors.staffId}</p>}
-          </div>
-
-          {/* Quarter */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Quarter *</label>
-            <div className="flex gap-2">
-              {QUARTERS.map((q) => {
-                const cnt = form.staffId ? countInQuarter(form.staffId, q, editingId) : 0
-                const full = cnt >= KPI_MAX_PER_QUARTER
-                return (
-                  <button key={q} type="button" onClick={() => setForm({ ...form, quarter: q })}
-                    className={`flex-1 py-2 rounded-lg border text-xs font-semibold transition-all ${form.quarter === q ? 'bg-indigo-600 text-white border-indigo-600' : full ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'}`}>
-                    {q}
-                    {form.staffId && <span className={`block text-[10px] font-normal ${form.quarter === q ? 'opacity-70' : full ? 'text-red-400' : 'text-gray-400'}`}>{cnt}/{KPI_MAX_PER_QUARTER}</span>}
-                  </button>
-                )
-              })}
-            </div>
-            {errors.quota && <p className="text-xs text-red-500 mt-1">{errors.quota}</p>}
-          </div>
-
-          {/* Title — งานที่มอบหมาย */}
-          <div className="md:col-span-2">
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">งานที่มอบหมาย *</label>
-            <input type="text" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
-              placeholder="เช่น เพิ่มยอดขายในตลาด X ให้ได้ 10%"
-              className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${errors.title ? 'border-red-400' : 'border-gray-300'}`} />
-            {errors.title && <p className="text-xs text-red-500 mt-1">{errors.title}</p>}
-          </div>
-
-          {/* Assessment method — วิธีการประเมิน */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">วิธีการประเมิน *</label>
-            <input type="text" value={form.assessmentMethod} onChange={(e) => setForm({ ...form, assessmentMethod: e.target.value })}
-              placeholder="เช่น ดูจากรายงานยอดขายรายเดือน"
-              className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${errors.assessmentMethod ? 'border-red-400' : 'border-gray-300'}`} />
-            {errors.assessmentMethod && <p className="text-xs text-red-500 mt-1">{errors.assessmentMethod}</p>}
-          </div>
-
-          {/* Remark — หมายเหตุ */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">หมายเหตุ <span className="text-gray-400 font-normal">(ถ้ามี)</span></label>
-            <input type="text" value={form.remark} onChange={(e) => setForm({ ...form, remark: e.target.value })}
-              placeholder="ข้อมูลเพิ่มเติมหรือเงื่อนไขพิเศษ"
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-          </div>
-        </div>
-
-        <div className="mt-5 flex justify-end">
-          <button onClick={handleSubmit}
-            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition-colors">
-            {editingId ? <><Check size={14} /> บันทึกการแก้ไข</> : <><PlusCircle size={14} /> มอบหมาย KPI</>}
-          </button>
-        </div>
-      </div>
-
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5 text-xs text-gray-500"><Filter size={13} /><span className="font-medium">กรอง:</span></div>
@@ -290,16 +313,17 @@ function SupervisorView() {
             </button>
           ))}
         </div>
-        <span className="ml-auto text-xs text-gray-400">{filteredByQuarter.length} KPI</span>
+        <span className="ml-auto text-xs text-gray-400">รายการ KPI แสดงในหน้าต่าง “มอบหมาย KPI”</span>
       </div>
 
       {/* KPI list grouped by staff */}
       {myStaff.filter(s => filterStaff === 'all' || s.id === filterStaff).map((staff) => {
         const staffKpis = filteredByQuarter.filter(k => k.staffId === staff.id)
         const accepted = staffKpis.filter(k => k.status === 'Accepted')
+        const pending = staffKpis.filter(k => k.status === 'Pending')
+        const rejected = staffKpis.filter(k => k.status === 'Rejected')
         const kpiCount = staffKpis.length
         const maxPerItem = kpiMaxPerItem(kpiCount)
-        const maxPossible = kpiCount * maxPerItem
         const supEval = getEvaluation(selectedYear, filterQuarter, staff.id, currentUser.id, 'part3_sup')
         const isScoringOpen = scoringKpiId === `${staff.id}__${filterQuarter}`
 
@@ -310,59 +334,28 @@ function SupervisorView() {
                 <Avatar user={staff} />
                 <div>
                   <p className="text-sm font-semibold text-gray-900">{staff.name}</p>
-                  <p className="text-xs text-gray-400">{staffKpis.length}/{KPI_MAX_PER_QUARTER} KPI · {accepted.length} ยอมรับ · {maxPerItem} คะแนน/ข้อ</p>
+                  <p className="text-xs text-gray-400">
+                    {staffKpis.length}/{KPI_MAX_PER_QUARTER} KPI · {accepted.length} ยอมรับ · {pending.length} รอยืนยัน · {rejected.length} ปฏิเสธ · {maxPerItem} คะแนน/ข้อ
+                  </p>
                 </div>
               </div>
-              {accepted.length > 0 && (
-                <button onClick={() => isScoringOpen ? setScoringKpiId(null) : openScoring(staff.id, filterQuarter)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isScoringOpen ? 'bg-indigo-100 text-indigo-700' : supEval ? 'bg-green-100 text-green-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
-                  <Star size={12} />
-                  {supEval ? `ให้คะแนนแล้ว (${supEval.rawTotal}/${accepted.length * maxPerItem})` : 'ให้คะแนน Supervisor'}
-                  {isScoringOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => openAssign(staff.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                >
+                  <PlusCircle size={12} /> มอบหมาย KPI
                 </button>
-              )}
-            </div>
-
-            {staffKpis.length === 0 ? (
-              <div className="px-5 py-8 text-center text-sm text-gray-400">ยังไม่มี KPI ใน {filterQuarter}</div>
-            ) : (
-              <div className="divide-y divide-gray-100">
-                {staffKpis.map((kpi, idx) => {
-                  const canEdit = kpi.status === 'Pending' || kpi.status === 'Rejected'
-                  return (
-                    <div key={kpi.id} className="px-5 py-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3 min-w-0 flex-1">
-                          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5 ${kpi.status === 'Accepted' ? 'bg-green-100 text-green-700' : kpi.status === 'Rejected' ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-700'}`}>
-                            {idx + 1}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm font-semibold text-gray-900">{kpi.title}</p>
-                              <StatusBadge status={kpi.status} />
-                            </div>
-                            <p className="text-xs text-gray-500 mt-1">วิธีประเมิน: <span className="text-gray-700">{kpi.assessmentMethod}</span></p>
-                            {kpi.remark && <p className="text-xs text-gray-400 mt-0.5">หมายเหตุ: {kpi.remark}</p>}
-                            {kpi.status === 'Rejected' && kpi.rejectReason && (
-                              <div className="mt-2 flex items-start gap-1.5 text-xs text-red-600 bg-red-50 border border-red-100 px-3 py-2 rounded-lg">
-                                <XCircle size={12} className="mt-0.5 shrink-0" />
-                                <span><strong>เหตุผลที่ปฏิเสธ:</strong> {kpi.rejectReason}</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {canEdit && (
-                            <button onClick={() => handleEdit(kpi)} className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"><Pencil size={14} /></button>
-                          )}
-                          <button onClick={() => setConfirmDelete(kpi.id)} className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={14} /></button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
+                {accepted.length > 0 && (
+                  <button onClick={() => isScoringOpen ? setScoringKpiId(null) : openScoring(staff.id, filterQuarter)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isScoringOpen ? 'bg-indigo-100 text-indigo-700' : supEval ? 'bg-green-100 text-green-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
+                    <Star size={12} />
+                    {supEval ? `ให้คะแนนแล้ว (${supEval.rawTotal}/${accepted.length * maxPerItem})` : 'ให้คะแนน Supervisor'}
+                    {isScoringOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  </button>
+                )}
               </div>
-            )}
+            </div>
 
             {/* Supervisor scoring panel */}
             {isScoringOpen && accepted.length > 0 && (
@@ -394,6 +387,243 @@ function SupervisorView() {
         )
       })}
 
+      {assignOpen && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-2xl mx-4">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">{editingId ? 'แก้ไข KPI' : 'มอบหมาย KPI ใหม่'}</h3>
+                <p className="text-xs text-gray-500 mt-0.5">ปี: <strong className="text-indigo-600">{selectedYear}</strong> · สูงสุด {KPI_MAX_PER_QUARTER} ข้อ/คน/Quarter</p>
+              </div>
+              <button onClick={closeAssign} className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 px-2.5 py-1.5 rounded-lg hover:bg-gray-100">
+                <X size={13} /> ปิด
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">พนักงาน *</label>
+                <div className="px-3 py-2 rounded-lg border border-gray-300 bg-gray-50 text-sm text-gray-700">
+                  {getUserById(form.staffId)?.name || '—'}
+                </div>
+                {errors.staffId && <p className="text-xs text-red-500 mt-1">{errors.staffId}</p>}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Quarter *</label>
+                <div className="flex gap-2">
+                  {QUARTERS.map((q) => {
+                    const cnt = form.staffId ? countInQuarter(form.staffId, q, editingId) : 0
+                    const full = cnt >= KPI_MAX_PER_QUARTER
+                    const canPick = form.staffId && !full
+                    return (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => {
+                          if (!canPick && form.quarter !== q) return
+                          if (!editingId && drafts.length > 0) setDrafts([])
+                          setForm({ ...form, quarter: q })
+                          setErrors({})
+                        }}
+                        className={`flex-1 py-2 rounded-lg border text-xs font-semibold transition-all ${
+                          form.quarter === q
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : full
+                              ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed'
+                              : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
+                        }`}
+                      >
+                        {q}
+                        {form.staffId && <span className={`block text-[10px] font-normal ${form.quarter === q ? 'opacity-70' : full ? 'text-red-400' : 'text-gray-400'}`}>{cnt}/{KPI_MAX_PER_QUARTER}</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+                {errors.quota && <p className="text-xs text-red-500 mt-1">{errors.quota}</p>}
+              </div>
+
+              {!editingId && (
+                <div className="md:col-span-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold text-gray-700">
+                      รายการที่เตรียมส่ง: {drafts.length}/{remainingSlots}
+                    </p>
+                    {drafts.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setDrafts([])}
+                        className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-100"
+                      >
+                        ล้างรายการ
+                      </button>
+                    )}
+                  </div>
+                  {remainingSlots === 0 ? (
+                    <div className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-xs text-gray-500">
+                      ครบ {KPI_MAX_PER_QUARTER} ข้อแล้วใน {form.quarter}
+                    </div>
+                  ) : drafts.length === 0 ? (
+                    <div className="px-3 py-2 rounded-lg border border-dashed border-gray-200 bg-white text-xs text-gray-400">
+                      กรอกข้อมูล KPI แล้วกด “มอบหมาย (เพิ่มข้อ)” ให้ครบ {remainingSlots} ข้อ เพื่อแสดงปุ่ม “ส่ง KPI”
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {drafts.map((d, idx) => (
+                        <div key={d.id} className="flex items-start gap-3 p-3 rounded-lg border border-gray-200 bg-white">
+                          <div className="w-6 h-6 rounded-full bg-indigo-50 text-indigo-700 flex items-center justify-center text-xs font-bold shrink-0">
+                            {idx + 1}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold text-gray-900 truncate">{d.title}</p>
+                            <p className="text-[11px] text-gray-500 truncate">{d.assessmentMethod}</p>
+                            {d.remark && <p className="text-[11px] text-gray-400 truncate">{d.remark}</p>}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeDraft(d.id)}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 shrink-0"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">งานที่มอบหมาย *</label>
+                <input
+                  type="text"
+                  value={form.title}
+                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                  placeholder="เช่น เพิ่มยอดขายในตลาด X ให้ได้ 10%"
+                  className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${errors.title ? 'border-red-400' : 'border-gray-300'}`}
+                />
+                {errors.title && <p className="text-xs text-red-500 mt-1">{errors.title}</p>}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">วิธีการประเมิน *</label>
+                <input
+                  type="text"
+                  value={form.assessmentMethod}
+                  onChange={(e) => setForm({ ...form, assessmentMethod: e.target.value })}
+                  placeholder="เช่น ดูจากรายงานยอดขายรายเดือน"
+                  className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${errors.assessmentMethod ? 'border-red-400' : 'border-gray-300'}`}
+                />
+                {errors.assessmentMethod && <p className="text-xs text-red-500 mt-1">{errors.assessmentMethod}</p>}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">หมายเหตุ <span className="text-gray-400 font-normal">(ถ้ามี)</span></label>
+                <input
+                  type="text"
+                  value={form.remark}
+                  onChange={(e) => setForm({ ...form, remark: e.target.value })}
+                  placeholder="ข้อมูลเพิ่มเติมหรือเงื่อนไขพิเศษ"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+
+            {!editingId && (
+              <div className="mt-6">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-gray-700">KPI ที่มอบหมายแล้ว ({form.quarter})</p>
+                  <p className="text-xs text-gray-400">{assignedInModal.length} รายการ</p>
+                </div>
+                {assignedInModal.length === 0 ? (
+                  <div className="px-3 py-3 rounded-lg border border-dashed border-gray-200 text-xs text-gray-400 text-center">
+                    ยังไม่มี KPI ใน {form.quarter}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+                    {assignedInModal.map((kpi, idx) => {
+                      const canEdit = kpi.status === 'Pending' || kpi.status === 'Rejected'
+                      return (
+                        <div key={kpi.id} className="px-4 py-3 bg-white">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-start gap-3 min-w-0 flex-1">
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5 ${kpi.status === 'Accepted' ? 'bg-green-100 text-green-700' : kpi.status === 'Rejected' ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-700'}`}>
+                                {idx + 1}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="text-xs font-semibold text-gray-900">{kpi.title}</p>
+                                  <StatusBadge status={kpi.status} />
+                                </div>
+                                <p className="text-[11px] text-gray-500 mt-1">วิธีประเมิน: <span className="text-gray-700">{kpi.assessmentMethod}</span></p>
+                                {kpi.remark && <p className="text-[11px] text-gray-400 mt-0.5">หมายเหตุ: {kpi.remark}</p>}
+                                {kpi.status === 'Rejected' && kpi.rejectReason && (
+                                  <div className="mt-2 flex items-start gap-1.5 text-[11px] text-red-600 bg-red-50 border border-red-100 px-3 py-2 rounded-lg">
+                                    <XCircle size={12} className="mt-0.5 shrink-0" />
+                                    <span><strong>เหตุผลที่ปฏิเสธ:</strong> {kpi.rejectReason}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {canEdit && (
+                                <button onClick={() => handleEdit(kpi)} className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"><Pencil size={14} /></button>
+                              )}
+                              <button onClick={() => setConfirmDelete(kpi.id)} className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={14} /></button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="mt-6 flex gap-3 justify-end">
+              <button onClick={closeAssign} className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                ยกเลิก
+              </button>
+              {editingId ? (
+                <button
+                  onClick={saveEdit}
+                  className="flex items-center gap-2 px-5 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  <Check size={14} /> บันทึกการแก้ไข
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={addDraft}
+                    disabled={!canAddDraft || sending}
+                    className={`flex items-center gap-2 px-5 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                      canAddDraft && !sending
+                        ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <PlusCircle size={14} /> มอบหมาย (เพิ่มข้อ)
+                  </button>
+                  {canSend && (
+                    <button
+                      type="button"
+                      onClick={sendDrafts}
+                      disabled={sending}
+                      className={`flex items-center gap-2 px-5 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                        sending ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'
+                      }`}
+                    >
+                      <CheckCircle2 size={14} /> ส่ง KPI
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirm Delete */}
       {confirmDelete && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
@@ -416,7 +646,7 @@ function SupervisorView() {
 
 // ─── Staff View ───────────────────────────────────────────────────────────────
 
-function StaffView() {
+function StaffView({ allUsers }) {
   const { data, selectedYear, currentUser, respondKpi, saveEvaluation, getEvaluation } = useApp()
   const [rejectModal, setRejectModal] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
@@ -432,7 +662,7 @@ function StaffView() {
   const rejected = quarterKpis.filter((k) => k.status === 'Rejected')
   const maxPerItem = kpiMaxPerItem(quarterKpis.length)
 
-  const getUserById = (id) => data.users.find((u) => u.id === id)
+  const getUserById = (id) => allUsers.find((u) => u.id === id)
 
   const handleAccept = (id) => respondKpi(id, 'Accepted')
 
@@ -633,15 +863,15 @@ function StaffView() {
 
 // ─── Read-only Overview (HR / MD) ─────────────────────────────────────────────
 
-function OverviewView() {
+function OverviewView({ allUsers }) {
   const { data, selectedYear, getEvaluation } = useApp()
   const [filterStaff, setFilterStaff] = useState('all')
   const [filterQuarter, setFilterQuarter] = useState('Q1')
 
   const yearKpis = data.kpis.filter((k) => k.year === selectedYear)
   const staffWithKpis = [...new Set(yearKpis.map((k) => k.staffId))]
-    .map((id) => data.users.find((u) => u.id === id)).filter(Boolean)
-  const getUserById = (id) => data.users.find((u) => u.id === id)
+    .map((id) => allUsers.find((u) => u.id === id)).filter(Boolean)
+  const getUserById = (id) => allUsers.find((u) => u.id === id)
 
   const filteredStaff = filterStaff === 'all' ? staffWithKpis : staffWithKpis.filter(s => s.id === filterStaff)
 
@@ -762,6 +992,14 @@ function OverviewView() {
 export default function KpiPage() {
   const { data, currentUser, selectedYear } = useApp()
   const { role } = useRBAC()
+  const [firebaseUsers, setFirebaseUsers] = useState([])
+
+  useEffect(() => subscribeAllUsers((list) => setFirebaseUsers(list.map(normalizeAnyUser).filter(Boolean))), [])
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [selectedYear])
+
+  const allUsers = (firebaseUsers.length > 0 ? firebaseUsers : (data.users ?? [])).map(normalizeAnyUser).filter(Boolean)
 
   // Determine view by staffConfig assignments, not role
   const isSupervisor = data.staffConfigs.some(
@@ -775,11 +1013,11 @@ export default function KpiPage() {
   // ถ้าเป็น supervisor ของใครก็ตาม ให้แสดงฟอร์มกำหนด KPI และรายชื่อ staff (รวมถึง HR ที่เป็น supervisor)
   let view
   if (isSupervisor) {
-    view = <SupervisorView />
+    view = <SupervisorView allUsers={allUsers} />
   } else if (isExecOrHR) {
-    view = <OverviewView />
+    view = <OverviewView allUsers={allUsers} />
   } else if (isAssignedAsStaff) {
-    view = <StaffView />
+    view = <StaffView allUsers={allUsers} />
   } else {
     view = (
       <div className="flex flex-col items-center justify-center py-24 text-center">

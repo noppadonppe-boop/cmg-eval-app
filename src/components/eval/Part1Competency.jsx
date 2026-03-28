@@ -223,7 +223,6 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
   const [errors, setErrors] = useState([])
 
   const staff = getUserById(staffId)
-  const isReadOnly = !!existing && saved
 
   const updateScore = (key, score) => {
     setSaved(false)
@@ -307,15 +306,9 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
             <p className="text-[10px] text-gray-400">คะแนนของฉัน ({rawTotal}/{maxRaw})</p>
             <p className="text-lg font-extrabold text-indigo-500">{myEstimate} <span className="text-xs font-normal text-gray-400">pt weighted</span></p>
           </div>
-          {saved ? (
-            <button onClick={() => setSaved(false)} className="px-4 py-2 border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
-              แก้ไข
-            </button>
-          ) : (
-            <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition-colors">
-              <Save size={14} /> บันทึก
-            </button>
-          )}
+          <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition-colors">
+            <Save size={14} /> บันทึก
+          </button>
         </div>
       </div>
 
@@ -393,7 +386,7 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
             comment={scores[item.key].comment}
             onChange={(v) => updateScore(item.key, v)}
             onCommentChange={(v) => updateComment(item.key, v)}
-            disabled={isReadOnly}
+            disabled={false}
           />
         ))}
       </div>

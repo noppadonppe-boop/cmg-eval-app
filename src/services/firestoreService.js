@@ -12,15 +12,21 @@ export function getRootRef() {
 const DEFAULT_DATA = {
   users: [],
   evaluationYears: [],
+  activeYear: null,
+  activeQuarter: 'Q1',
   staffConfigs: [],
   kpis: [],
   quarterlyEvaluations: [],
 }
 
 function toWritePayload(data) {
+  const q = String(data.activeQuarter || '').toUpperCase()
+  const activeQuarter = q === 'Q1' || q === 'Q2' || q === 'Q3' || q === 'Q4' ? q : 'Q1'
   return {
     users: data.users ?? [],
     evaluationYears: data.evaluationYears ?? [],
+    activeYear: typeof data.activeYear === 'number' ? data.activeYear : null,
+    activeQuarter,
     staffConfigs: data.staffConfigs ?? [],
     kpis: data.kpis ?? [],
     quarterlyEvaluations: data.quarterlyEvaluations ?? [],
@@ -30,9 +36,13 @@ function toWritePayload(data) {
 export function parseSnapshot(snap) {
   if (!snap?.exists?.()) return null
   const d = snap.data()
+  const q = String(d.activeQuarter || '').toUpperCase()
+  const activeQuarter = q === 'Q1' || q === 'Q2' || q === 'Q3' || q === 'Q4' ? q : DEFAULT_DATA.activeQuarter
   return {
     users: Array.isArray(d.users) ? d.users : DEFAULT_DATA.users,
     evaluationYears: Array.isArray(d.evaluationYears) ? d.evaluationYears : DEFAULT_DATA.evaluationYears,
+    activeYear: typeof d.activeYear === 'number' ? d.activeYear : DEFAULT_DATA.activeYear,
+    activeQuarter,
     staffConfigs: Array.isArray(d.staffConfigs) ? d.staffConfigs : DEFAULT_DATA.staffConfigs,
     kpis: Array.isArray(d.kpis) ? d.kpis : DEFAULT_DATA.kpis,
     quarterlyEvaluations: Array.isArray(d.quarterlyEvaluations) ? d.quarterlyEvaluations : DEFAULT_DATA.quarterlyEvaluations,

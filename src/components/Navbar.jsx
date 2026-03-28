@@ -30,6 +30,8 @@ export default function Navbar() {
     { to: '/admin', label: 'Admin',       icon: <Settings size={16} />,        show: can('canViewAdmin') },
   ].filter((l) => l.show)
 
+  const canSwitchYear = can('canManageYears')
+
   return (
     <nav className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -70,14 +72,24 @@ export default function Navbar() {
             {/* Year Selector */}
             <div className="relative" ref={yearRef}>
               <button
-                onClick={() => { setYearOpen((v) => !v); setUserOpen(false) }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all"
+                onClick={() => {
+                  if (!canSwitchYear) return
+                  setYearOpen((v) => !v)
+                  setUserOpen(false)
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-white text-sm font-medium transition-all ${
+                  canSwitchYear
+                    ? 'border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300'
+                    : 'border-gray-200 text-gray-400 bg-gray-50 cursor-not-allowed'
+                }`}
               >
                 <CalendarDays size={14} className="text-indigo-500" />
                 <span className="text-indigo-600 font-semibold">{selectedYear}</span>
-                <ChevronDown size={13} className={`text-gray-400 transition-transform duration-200 ${yearOpen ? 'rotate-180' : ''}`} />
+                {canSwitchYear && (
+                  <ChevronDown size={13} className={`text-gray-400 transition-transform duration-200 ${yearOpen ? 'rotate-180' : ''}`} />
+                )}
               </button>
-              {yearOpen && (
+              {canSwitchYear && yearOpen && (
                 <div className="absolute right-0 mt-1.5 w-32 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden py-1">
                   <p className="px-3 pt-1.5 pb-1 text-xs text-gray-400 font-medium uppercase tracking-wide">Year</p>
                   {data.evaluationYears.map((yr) => (

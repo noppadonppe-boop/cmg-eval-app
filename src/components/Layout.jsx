@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom'
+import { Outlet, useLocation, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
 import useRBAC from '../hooks/useRBAC'
@@ -50,7 +50,6 @@ export default function Layout() {
   const { data, currentUser, selectedYear, setSelectedYear } = useApp()
   const { can, roles } = useRBAC()
   const location = useLocation()
-  const navigate = useNavigate()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showUserMgmt, setShowUserMgmt] = useState(false)
@@ -62,6 +61,7 @@ export default function Layout() {
   const yearDropRef = useRef(null)
 
   const isMasterAdmin = roles?.includes('MasterAdmin')
+  const canSwitchYear = can('canManageYears')
 
   // Determine which nav links to show
   const isSupervisor = data?.staffConfigs?.some(c => c.supervisorId === currentUser?.id && c.year === selectedYear)
@@ -297,14 +297,24 @@ export default function Layout() {
           {/* Year Selector */}
           <div className="relative" ref={yearDropRef}>
             <button
-              onClick={() => { setYearDropOpen(v => !v); setProfileDropOpen(false) }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
+              onClick={() => {
+                if (!canSwitchYear) return
+                setYearDropOpen((v) => !v)
+                setProfileDropOpen(false)
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-white text-sm font-medium transition-all ${
+                canSwitchYear
+                  ? 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                  : 'border-gray-200 text-gray-400 bg-gray-50 cursor-not-allowed'
+              }`}
             >
               <CalendarDays size={14} className="text-indigo-500" />
               <span className="text-indigo-600 font-semibold">{selectedYear}</span>
-              <ChevronDown size={12} className={`text-gray-400 transition-transform ${yearDropOpen ? 'rotate-180' : ''}`} />
+              {canSwitchYear && (
+                <ChevronDown size={12} className={`text-gray-400 transition-transform ${yearDropOpen ? 'rotate-180' : ''}`} />
+              )}
             </button>
-            {yearDropOpen && (
+            {canSwitchYear && yearDropOpen && (
               <div className="absolute right-0 mt-1.5 w-32 bg-white border border-gray-200 rounded-xl shadow-xl z-50 py-1 overflow-hidden">
                 <p className="px-3 pt-1.5 pb-1 text-xs text-gray-400 font-semibold uppercase tracking-wide">ปี</p>
                 {(data?.evaluationYears || []).map((yr) => (

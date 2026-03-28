@@ -6,7 +6,7 @@ import {
 } from 'recharts'
 import { useApp } from '../../context/AppContext'
 import { ROLE_AVATAR_BG, ROLE_BADGE_CLASSES } from '../../hooks/useRBAC'
-import { getMultiYearTrend, getAnnualScores, PART_COLORS, PART_LABELS } from '../../utils/scoreUtils'
+import { getAnnualScores, PART_COLORS, PART_LABELS } from '../../utils/scoreUtils'
 import { TrendingUp, Users, Award, BarChart2 } from 'lucide-react'
 
 const STAFF_PALETTE = [

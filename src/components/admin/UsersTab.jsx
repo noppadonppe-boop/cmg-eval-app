@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useApp } from '../../context/AppContext'
 import { subscribeAllUsers, updateUserProfile, ALL_ROLES } from '../../services/authService'
 import { useAuth } from '../../context/AuthContext'
+import useRBAC from '../../hooks/useRBAC'
 import { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../../hooks/useRBAC'
 import {
   UserPlus, Pencil, Trash2, Check, X, AlertCircle, ExternalLink,
@@ -12,17 +13,21 @@ import {
 // ── Legacy Evaluation System Users (data.users) ────────────────────────────────
 const ROLES = ['Staff', 'HR', 'HRM', 'GM', 'MD']
 const BLANK_FORM = { name: '', role: 'Staff', staffCode: '', jdUrl: '' }
+const ALL_POSITIONS = ['Staff', 'Supervisor']
 
-// ── Role badge for Firebase users ──────────────────────────────────────────────
-const ROLE_BADGE = {
-  MasterAdmin: 'bg-purple-100 text-purple-800 ring-purple-200',
-  HR:          'bg-green-100 text-green-800 ring-green-200',
-  HRM:         'bg-teal-100 text-teal-800 ring-teal-200',
-  GM:          'bg-orange-100 text-orange-800 ring-orange-200',
-  MD:          'bg-red-100 text-red-800 ring-red-200',
-  Staff:       'bg-blue-100 text-blue-800 ring-blue-200',
-  Viewer:      'bg-gray-100 text-gray-700 ring-gray-200',
-  Creator:     'bg-pink-100 text-pink-800 ring-pink-200',
+const POSITION_BADGE = {
+  Staff:      'bg-blue-100 text-blue-800 ring-blue-200',
+  Supervisor: 'bg-purple-100 text-purple-800 ring-purple-200',
+}
+
+function normalizePositions(user) {
+  if (Array.isArray(user?.positions) && user.positions.length > 0) return user.positions
+  const roles = Array.isArray(user?.roles) ? user.roles : [user?.role].filter(Boolean)
+  const hasStaff = roles.includes('Staff')
+  const hasNonStaff = roles.some((r) => r && r !== 'Staff')
+  if (hasStaff && hasNonStaff) return ['Staff', 'Supervisor']
+  if (hasNonStaff) return ['Supervisor']
+  return ['Staff']
 }
 
 const STATUS_BADGE = {
@@ -55,24 +60,18 @@ function FBAvatar({ user }) {
 // ── Firebase User Row with JD URL edit ────────────────────────────────────────
 function FirebaseUserRow({ user, isSelf }) {
   const [editing, setEditing]   = useState(false)
-  const [jdUrl, setJdUrl]       = useState(user.jdUrl || '')
-  const [staffCode, setStaffCode] = useState(user.staffCode || '')
+  const [jdUrl, setJdUrl]       = useState('')
+  const [staffCode, setStaffCode] = useState('')
+  const [positions, setPositions] = useState(['Staff'])
   const [saving, setSaving]     = useState(false)
   const [saved, setSaved]       = useState(false)
-
-  // Sync from real-time updates (only when not editing)
-  useEffect(() => {
-    if (!editing) {
-      setJdUrl(user.jdUrl || '')
-      setStaffCode(user.staffCode || '')
-    }
-  }, [user.jdUrl, user.staffCode, editing])
 
   const handleSave = async () => {
     setSaving(true)
     await updateUserProfile(user.uid, {
       jdUrl:     jdUrl.trim(),
       staffCode: staffCode.trim(),
+      positions,
     }).catch(() => {})
     setSaving(false)
     setSaved(true)
@@ -117,9 +116,9 @@ function FirebaseUserRow({ user, isSelf }) {
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
           <div className="flex gap-1 flex-wrap">
-            {(user.roles || ['Staff']).map((r) => (
-              <span key={r} className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ${ROLE_BADGE[r] || 'bg-gray-100 text-gray-600 ring-gray-200'}`}>
-                {r}
+            {normalizePositions(user).map((p) => (
+              <span key={p} className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ${POSITION_BADGE[p] || 'bg-gray-100 text-gray-600 ring-gray-200'}`}>
+                {p}
               </span>
             ))}
           </div>
@@ -128,7 +127,16 @@ function FirebaseUserRow({ user, isSelf }) {
           </span>
         </div>
         <button
-          onClick={() => setEditing(v => !v)}
+          onClick={() => {
+            if (editing) {
+              setEditing(false)
+              return
+            }
+            setJdUrl(user.jdUrl || '')
+            setStaffCode(user.staffCode || '')
+            setPositions(normalizePositions(user))
+            setEditing(true)
+          }}
           title={editing ? 'ยกเลิก' : 'แก้ไข JD URL'}
           className={`p-2 rounded-lg border text-xs transition-colors shrink-0 ${
             editing ? 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100' : 'border-gray-200 text-gray-500 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600'
@@ -141,7 +149,7 @@ function FirebaseUserRow({ user, isSelf }) {
       {/* Inline Edit: JD URL + Staff Code */}
       {editing && (
         <div className="border-t border-indigo-100 bg-indigo-50/40 px-5 py-4 space-y-3">
-          <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">แก้ไข JD & Staff Code</p>
+          <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">แก้ไข JD, Staff Code และ Position</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1.5 flex items-center gap-1">
@@ -170,10 +178,38 @@ function FirebaseUserRow({ user, isSelf }) {
               <p className="text-[10px] text-gray-400 mt-1">ใช้เชื่อมกับระบบ Evaluation</p>
             </div>
           </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Position <span className="font-normal text-gray-400">(เลือกได้หลาย)</span></label>
+            <div className="flex items-center gap-3 flex-wrap">
+              {ALL_POSITIONS.map((p) => {
+                const checked = positions.includes(p)
+                return (
+                  <label key={p} className="flex items-center gap-2 text-sm text-gray-700 select-none">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        setPositions((prev) => {
+                          if (prev.includes(p)) {
+                            if (prev.length === 1) return prev
+                            return prev.filter((x) => x !== p)
+                          }
+                          return [...prev, p]
+                        })
+                      }}
+                      className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ring-1 ${POSITION_BADGE[p] || 'bg-gray-100 text-gray-600 ring-gray-200'}`}>{p}</span>
+                  </label>
+                )
+              })}
+            </div>
+            {positions.length === 0 && <p className="text-xs text-red-500 mt-1">กรุณาเลือก Position อย่างน้อย 1 อย่าง</p>}
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || positions.length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
             >
               {saving ? <Loader size={14} className="animate-spin" /> : <Save size={14} />}
@@ -225,9 +261,6 @@ function EvalUserRow({ user, onEdit, onDelete }) {
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ${ROLE_BADGE_CLASSES[user.role] || 'bg-gray-100 text-gray-600 ring-gray-200'}`}>
-          {user.role}
-        </span>
         <button onClick={() => onEdit(user)} className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
           <Pencil size={14} />
         </button>
@@ -241,8 +274,9 @@ function EvalUserRow({ user, onEdit, onDelete }) {
 
 // ── Main UsersTab ──────────────────────────────────────────────────────────────
 export default function UsersTab() {
-  const { data, addUser, updateUser, removeUser } = useApp()
+  const { data, addUser, updateUser, removeUser, selectedYear, resetEvaluationsForYear } = useApp()
   const { userProfile } = useAuth()
+  const { isRole } = useRBAC()
 
   // Firebase auth users (real-time)
   const [fbUsers, setFbUsers]   = useState([])
@@ -255,6 +289,9 @@ export default function UsersTab() {
   const [error, setError]       = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [showEvalUsers, setShowEvalUsers] = useState(false)
+  const [resetOpen, setResetOpen] = useState(false)
+  const [resetText, setResetText] = useState('')
+  const [resetDone, setResetDone] = useState(false)
 
   useEffect(() => {
     const unsub = subscribeAllUsers((list) => {
@@ -286,6 +323,9 @@ export default function UsersTab() {
   const handleDelete = (id) => setConfirmDelete(id)
   const confirmDeleteUser = () => { removeUser(confirmDelete); setConfirmDelete(null) }
 
+  const yearEvalCount = (data.quarterlyEvaluations || []).filter((e) => e.year === selectedYear).length
+  const canConfirmReset = resetText.trim() === String(selectedYear)
+
   return (
     <div className="space-y-6">
       {/* ── Confirm Delete Modal ── */}
@@ -304,6 +344,83 @@ export default function UsersTab() {
               <button onClick={confirmDeleteUser} className="flex-1 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700">Delete</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Reset Evaluation Modal (MasterAdmin) ── */}
+      {resetOpen && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md mx-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="bg-red-100 p-2 rounded-lg"><AlertCircle size={18} className="text-red-600" /></div>
+              <h3 className="text-base font-semibold text-gray-900">รีเซ็ตการประเมินทั้งปี</h3>
+            </div>
+            <p className="text-sm text-gray-700">
+              การดำเนินการนี้จะลบข้อมูลการประเมินทั้งหมดของปี <strong>{selectedYear}</strong> (Part 1–4 และ KPI scoring) และไม่สามารถย้อนกลับได้
+            </p>
+            <p className="text-xs text-gray-500 mt-2">
+              จะไม่กระทบ Hierarchy (Supervisor/Stakeholders) และ JD Attachment URL แต่จะลบ KPI ที่ถูก Assign ของปีนี้ด้วย
+            </p>
+            <div className="mt-4">
+              <p className="text-xs font-semibold text-gray-700 mb-1.5">
+                พิมพ์ปี <span className="font-bold text-red-600">{selectedYear}</span> เพื่อยืนยัน
+              </p>
+              <input
+                type="text"
+                value={resetText}
+                onChange={(e) => setResetText(e.target.value)}
+                placeholder={`${selectedYear}`}
+                className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
+              <p className="text-[11px] text-gray-400 mt-2">
+                รายการที่พบในปีนี้: <strong>{yearEvalCount}</strong> records
+              </p>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => { setResetOpen(false); setResetText('') }}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                ยกเลิก
+              </button>
+              <button
+                disabled={!canConfirmReset}
+                onClick={() => {
+                  resetEvaluationsForYear(selectedYear)
+                  setResetOpen(false)
+                  setResetText('')
+                  setResetDone(true)
+                  setTimeout(() => setResetDone(false), 2500)
+                }}
+                className="flex-1 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-50"
+              >
+                รีเซ็ตปี {selectedYear}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isRole('MasterAdmin') && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">เครื่องมือ MasterAdmin</h3>
+              <p className="text-xs text-gray-500 mt-0.5">รีเซ็ตข้อมูลการประเมินของปีที่ Active อยู่</p>
+            </div>
+            <button
+              onClick={() => setResetOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700"
+            >
+              <Trash2 size={14} /> รีเซ็ตการประเมินปี {selectedYear}
+            </button>
+          </div>
+          {resetDone && (
+            <div className="px-5 py-3 bg-green-50 border-t border-green-200 flex items-center gap-2">
+              <CheckCircle2 size={14} className="text-green-600" />
+              <p className="text-xs text-green-700 font-semibold">รีเซ็ตข้อมูลการประเมินปี {selectedYear} เรียบร้อยแล้ว</p>
+            </div>
+          )}
         </div>
       )}
 

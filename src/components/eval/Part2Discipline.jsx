@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useApp } from '../../context/AppContext'
-import { ROLE_AVATAR_BG } from '../../hooks/useRBAC'
+import useRBAC, { ROLE_AVATAR_BG } from '../../hooks/useRBAC'
 import {
   CheckCircle2, Save, Shield, ChevronDown, ChevronUp,
   ThumbsUp, ThumbsDown, Info, Lock
@@ -131,7 +131,7 @@ function deductionBreakdown(m) {
   ]
 }
 
-function MonthCard({ monthName, monthIdx, data, onUpdate, disabled, vacationQuota }) {
+function MonthCard({ monthName, monthIdx, data, onUpdate, disabled }) {
   const [open, setOpen] = useState(monthIdx === 0)
   const score = calcMonthScore(data)
   const breakdown = deductionBreakdown(data)
@@ -300,26 +300,24 @@ function buildInitial(existing) {
   }
 }
 
-export default function Part2Discipline({ staffId, quarter, year }) {
-  const { currentUser, saveEvaluation, getEvaluation, getEvaluationForPart, getUserById } = useApp()
-  const isHR = currentUser?.role === 'HR'
-  const isHRM = currentUser?.role === 'MD'  // MD acts as HRM approver
-  // HR โหลด/บันทึกด้วย evaluatorId ตัวเอง; Supervisor/Staff ดูข้อมูลที่ HR กรอก (โหลดจาก part2 ตาม staff/quarter)
-  const existing = isHR
-    ? getEvaluation(year, quarter, staffId, currentUser.id, 'part2')
-    : getEvaluationForPart(year, quarter, staffId, 'part2')
+export default function Part2Discipline({ staffId, quarter, year, staffOverride = null }) {
+  const { currentUser, saveEvaluation, getEvaluationForPart, getUserById } = useApp()
+  const { role, can } = useRBAC()
+  const canEdit = can('canInputDiscipline')
+  const canApprove = role === 'MD'
+  const existing = getEvaluationForPart(year, quarter, staffId, 'part2')
 
   const [months, setMonths] = useState(() => buildInitial(existing))
   const [hrmApproved, setHrmApproved] = useState(existing?.hrmApproved ?? false)
   const [hrmRemark, setHrmRemark] = useState(existing?.hrmRemark ?? '')
   const [saved, setSaved] = useState(!!existing)
 
-  const staff = getUserById(staffId)
-  const readOnly = !isHR && !isHRM  // Supervisor และ Staff ดูได้อย่างเดียว แก้ไขไม่ได้
+  const staff = staffOverride || getUserById(staffId)
+  const readOnly = !canEdit && !canApprove
 
   // โหลดข้อมูล Part 2 ที่ HR กรอก (เมื่อเป็น readOnly และมี existing จาก getEvaluationForPart)
   useEffect(() => {
-    if (readOnly && existing) {
+    if ((readOnly || canEdit || canApprove) && existing) {
       setMonths(buildInitial(existing))
       setHrmApproved(existing.hrmApproved ?? false)
       setHrmRemark(existing.hrmRemark ?? '')
@@ -340,9 +338,10 @@ export default function Part2Discipline({ staffId, quarter, year }) {
     : null
 
   const handleSave = () => {
+    const evaluatorId = existing?.evaluatorId ?? currentUser.id
     saveEvaluation({
       year, quarter, staffId,
-      evaluatorId: currentUser.id,
+      evaluatorId,
       evaluatorRole: 'HR',
       part: 'part2',
       months,
@@ -356,9 +355,10 @@ export default function Part2Discipline({ staffId, quarter, year }) {
 
   const handleApprove = (approve) => {
     setHrmApproved(approve)
+    const evaluatorId = existing?.evaluatorId ?? currentUser.id
     saveEvaluation({
       year, quarter, staffId,
-      evaluatorId: currentUser.id,
+      evaluatorId,
       evaluatorRole: 'HR',
       part: 'part2',
       months,
@@ -424,7 +424,7 @@ export default function Part2Discipline({ staffId, quarter, year }) {
       )}
 
       {/* HR save / edit buttons */}
-      {isHR && !hrmApproved && !readOnly && (
+      {canEdit && !hrmApproved && !readOnly && (
         <div className="flex gap-2 justify-end">
           {saved && (
             <button
@@ -465,8 +465,7 @@ export default function Part2Discipline({ staffId, quarter, year }) {
             monthName={monthNames[idx]}
             data={months[mk]}
             onUpdate={(val) => updateMonth(mk, val)}
-            disabled={readOnly || !isHR || hrmApproved}
-            vacationQuota={months[mk].vacationQuota}
+            disabled={readOnly || !canEdit || hrmApproved}
           />
         ))}
       </div>
@@ -505,7 +504,7 @@ export default function Part2Discipline({ staffId, quarter, year }) {
       )}
 
       {/* HRM approval section (เฉพาะ HR/HRM ไม่แสดงในโหมด read-only) */}
-      {saved && !hrmApproved && !readOnly && (isHRM || isHR) && (
+      {saved && !hrmApproved && !readOnly && (canApprove || canEdit) && (
         <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-4 space-y-3">
           <div className="flex items-center gap-2">
             <Shield size={14} className="text-amber-600" />
@@ -519,7 +518,7 @@ export default function Part2Discipline({ staffId, quarter, year }) {
             placeholder="หมายเหตุของ HRM (ถ้ามี)..."
             className="w-full px-3 py-2 text-sm rounded-lg border border-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder:text-gray-300 resize-none"
           />
-          {isHRM && (
+          {canApprove && (
             <div className="flex gap-2">
               <button
                 onClick={() => handleApprove(true)}
@@ -535,7 +534,7 @@ export default function Part2Discipline({ staffId, quarter, year }) {
               </button>
             </div>
           )}
-          {!isHRM && (
+          {!canApprove && (
             <p className="text-xs text-amber-600 flex items-center gap-1">
               <Lock size={11} /> รอ MD (HRM) เข้าสู่ระบบเพื่ออนุมัติ
             </p>

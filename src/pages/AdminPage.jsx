@@ -1,20 +1,22 @@
 import { useState } from 'react'
-import { Settings, CalendarDays, Users, GitBranch, ShieldOff } from 'lucide-react'
+import { Settings, CalendarDays, Users, GitBranch, ShieldOff, Shield } from 'lucide-react'
 import useRBAC from '../hooks/useRBAC'
 import { useApp } from '../context/AppContext'
 import YearsTab from '../components/admin/YearsTab'
 import UsersTab from '../components/admin/UsersTab'
 import HierarchyTab from '../components/admin/HierarchyTab'
+import DisciplineTab from '../components/admin/DisciplineTab'
 
 const TABS = [
   { id: 'years',     label: 'Evaluation Years', icon: <CalendarDays size={15} /> },
   { id: 'users',     label: 'Users',             icon: <Users size={15} /> },
   { id: 'hierarchy', label: 'Hierarchy',          icon: <GitBranch size={15} /> },
+  { id: 'discipline', label: 'Discipline',        icon: <Shield size={15} /> },
 ]
 
 export default function AdminPage() {
   const { can } = useRBAC()
-  const { selectedYear } = useApp()
+  const { selectedYear, activeQuarter } = useApp()
   const [activeTab, setActiveTab] = useState('years')
 
   if (!can('canViewAdmin')) {
@@ -47,7 +49,7 @@ export default function AdminPage() {
         </div>
         <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg">
           <CalendarDays size={14} className="text-indigo-500" />
-          <span className="text-sm font-semibold text-indigo-700">Active Year: {selectedYear}</span>
+          <span className="text-sm font-semibold text-indigo-700">Active: {selectedYear} · {activeQuarter}</span>
         </div>
       </div>
 
@@ -73,6 +75,7 @@ export default function AdminPage() {
       {activeTab === 'years'     && <YearsTab />}
       {activeTab === 'users'     && <UsersTab />}
       {activeTab === 'hierarchy' && <HierarchyTab />}
+      {activeTab === 'discipline' && <DisciplineTab />}
     </div>
   )
 }
