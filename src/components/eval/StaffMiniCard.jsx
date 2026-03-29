@@ -43,7 +43,7 @@ function UserAvatar({ user, size = 'md' }) {
   const sizeClass =
     size === 'xl' ? 'w-20 h-20 text-2xl' :
     size === 'lg' ? 'w-16 h-16 text-xl' :
-    size === 'md' ? 'w-12 h-12 text-base' :
+    size === 'md' ? 'w-10 h-10 text-sm sm:w-12 sm:h-12 sm:text-base' :
     'w-8 h-8 text-xs'
 
   if (user?.photoURL) {
@@ -68,7 +68,7 @@ function UserAvatar({ user, size = 'md' }) {
   )
 }
 
-export default function StaffMiniCard({ user, isSelected = false, onClick, statusLabel, statusDetail, statusTone = 'todo' }) {
+export default function StaffMiniCard({ user, isSelected = false, onClick, statusLabel, statusDetail, statusTone = 'todo', isSummaryCard = false, summaryScore = null }) {
   const displayName = getUserDisplayName(user)
   const role = getPrimaryRole(user)
   const position = getPositionLabel(user)
@@ -80,7 +80,7 @@ export default function StaffMiniCard({ user, isSelected = false, onClick, statu
     <button
       onClick={onClick}
       disabled={isDisabled}
-      className={`group relative flex flex-col items-center gap-2 p-3 pt-4 rounded-xl border transition-all duration-200 w-full text-center shadow-sm hover:shadow-md ${
+      className={`group relative flex flex-col items-center gap-1.5 sm:gap-2 p-2 pt-4 sm:p-3 sm:pt-5 rounded-xl border transition-all duration-200 w-full text-center shadow-sm hover:shadow-md ${
         isDisabled
           ? 'border-gray-200 bg-gray-50 opacity-70 cursor-not-allowed shadow-none'
           : isSelected
@@ -88,6 +88,20 @@ export default function StaffMiniCard({ user, isSelected = false, onClick, statu
             : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40'
       }`}
     >
+      {/* Target Badge */}
+      {isSummaryCard && (
+        <div 
+          className="absolute -top-2 -right-2 z-10 flex flex-col items-center justify-center p-1.5 min-w-[36px] min-h-[36px] rounded-2xl shadow-sm border-2 border-white bg-gradient-to-br from-yellow-300 to-amber-500 rotate-3"
+          title="Total Score"
+        >
+          <svg className="w-3.5 h-3.5 text-yellow-900 fill-current mb-0.5 drop-shadow-sm" viewBox="0 0 24 24">
+            <path stroke="none" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+          </svg>
+          <span className="text-[11px] font-black text-blue-800 leading-none drop-shadow-sm">
+            {summaryScore !== null ? summaryScore : '-'}
+          </span>
+        </div>
+      )}
       <div className={`relative transition-transform duration-200 ${isSelected ? 'scale-105' : 'group-hover:scale-105'}`}>
         <UserAvatar user={user} size="md" />
         {isSelected && (

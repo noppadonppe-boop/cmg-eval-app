@@ -167,12 +167,14 @@ export default function HierarchyTab() {
   const evaluatableUsers = allUsers.filter((u) => (u.positions || []).includes('Staff')).sort(sortByName)
   const supervisorCandidates = allUsers.filter((u) => (u.positions || []).includes('Supervisor')).sort(sortByName)
   
-  // Req 3: Hide stakeholders assigned >= 3 times unless already selected here
-  const stakeholderUsageCount = (id) => yearConfigs.filter(cfg => (cfg.stakeholderIds || []).includes(id)).length
   const stakeholderCandidates = allUsers
     .filter((u) => CAN_BE_STAKEHOLDER_ROLES.includes(u.role))
-    .filter((u) => stakeholderUsageCount(u.id) < 3 || stakeholderIds.includes(u.id))
     .sort(sortByName)
+
+  const staffStakeholderCount = (id) => {
+    const cfg = yearConfigs.find((c) => c.staffId === id)
+    return (cfg?.stakeholderIds || []).length
+  }
 
   const getUserById = (id) => allUsers.find((u) => u.id === id)
 
@@ -392,9 +394,15 @@ export default function HierarchyTab() {
                 className="w-full px-2.5 py-2 rounded-lg border border-gray-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
               >
                 <option value="">— เลือก Staff —</option>
-                {evaluatableUsers.map((u) => (
-                  <option key={u.id} value={u.id}>{u.name}</option>
-                ))}
+                {evaluatableUsers.map((u) => {
+                  const cnt = staffStakeholderCount(u.id)
+                  const isFull = cnt >= 3
+                  return (
+                    <option key={u.id} value={u.id} disabled={isFull && stakeStaffId !== u.id} className={isFull && stakeStaffId !== u.id ? 'text-gray-400' : ''}>
+                      {u.name} ({cnt}/3)
+                    </option>
+                  )
+                })}
               </select>
             </div>
 
@@ -492,7 +500,7 @@ export default function HierarchyTab() {
       </div>
 
       {/* Configs List */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mt-4">
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-gray-900">การ Assign พนักงาน — {selectedYear}</h3>
@@ -507,93 +515,98 @@ export default function HierarchyTab() {
             <p className="text-xs text-gray-400 mt-1">เพิ่ม Assignment ด้านบน หรือสร้างปีใหม่เพื่อโคลนโครงสร้างจากปีก่อนหน้า</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-100">
-            {yearConfigs.map((cfg) => {
-              const staff = getUserById(cfg.staffId)
-              const supervisor = getUserById(cfg.supervisorId)
-              const stakeholders = (cfg.stakeholderIds || []).map(getUserById).filter(Boolean)
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse whitespace-nowrap">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-[11px] text-gray-500 font-semibold uppercase tracking-wider">
+                  <th className="px-4 py-2.5 font-medium">Staff</th>
+                  <th className="px-4 py-2.5 font-medium">Supervisor</th>
+                  <th className="px-4 py-2.5 font-medium w-full">Stakeholders</th>
+                  <th className="px-4 py-2.5 font-medium text-center">ลาได้ (วัน)</th>
+                  <th className="px-4 py-2.5 font-medium text-right">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-xs">
+                {yearConfigs.map((cfg) => {
+                  const staff = getUserById(cfg.staffId)
+                  const supervisor = getUserById(cfg.supervisorId)
+                  const stakeholders = (cfg.stakeholderIds || []).map(getUserById).filter(Boolean)
 
-              return (
-                <div key={`${cfg.year}_${cfg.staffId}`} className="px-4 py-3 transition-colors hover:bg-gray-50">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  return (
+                    <tr key={`${cfg.year}_${cfg.staffId}`} className="hover:bg-indigo-50/40 transition-colors group">
                       {/* Staff */}
-                      <div className="flex items-center gap-2.5">
-                        <div className="bg-blue-50 p-1.5 rounded-lg shrink-0">
-                          <User size={13} className="text-blue-600" />
+                      <td className="px-4 py-2 align-middle">
+                        <div className="flex items-center gap-2">
+                          <Avatar user={staff} size="sm" />
+                          <span className="font-semibold text-gray-900 truncate max-w-[140px] xl:max-w-[180px]" title={staff?.name}>{staff?.name || '—'}</span>
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-xs text-gray-400 font-medium">Staff</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <Avatar user={staff} />
-                            <p className="text-sm font-semibold text-gray-900 truncate">{staff?.name || '—'}</p>
-                          </div>
-                        </div>
-                      </div>
+                      </td>
 
                       {/* Supervisor */}
-                      <div className="flex items-center gap-2.5">
-                        <div className="bg-purple-50 p-1.5 rounded-lg shrink-0">
-                          <Briefcase size={13} className="text-purple-600" />
+                      <td className="px-4 py-2 align-middle border-l border-gray-50">
+                        <div className="flex items-center gap-2">
+                          {supervisor ? (
+                            <>
+                              <Avatar user={supervisor} size="sm" />
+                              <span className="font-medium text-gray-700 truncate max-w-[140px] xl:max-w-[180px]" title={supervisor.name}>{supervisor.name}</span>
+                            </>
+                          ) : (
+                            <span className="text-gray-400 italic px-2">—</span>
+                          )}
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-xs text-gray-400 font-medium">Supervisor</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <Avatar user={supervisor} />
-                            <p className="text-sm font-semibold text-gray-900 truncate">{supervisor?.name || '—'}</p>
-                          </div>
-                        </div>
-                      </div>
+                      </td>
 
-                      {/* Stakeholders + Leave */}
-                      <div className="flex items-start gap-2.5">
-                        <div className="bg-yellow-50 p-1.5 rounded-lg shrink-0 mt-0.5">
-                          <Users size={13} className="text-yellow-600" />
+                      {/* Stakeholders */}
+                      <td className="px-4 py-2 align-middle border-l border-gray-50 whitespace-normal">
+                        <div className="flex flex-wrap gap-1">
+                          {stakeholders.length > 0 ? (
+                            stakeholders.map((s) => (
+                              <span key={s.id} className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border border-gray-200 bg-white text-gray-600 whitespace-nowrap">
+                                {s.name}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-gray-400 italic px-1">—</span>
+                          )}
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-xs text-gray-400 font-medium">Stakeholders · {cfg.leaveQuota}d leave</p>
-                          <div className="flex flex-wrap gap-1 mt-0.5">
-                            {stakeholders.length > 0
-                              ? stakeholders.map((s) => (
-                                  <span key={s.id} className="flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded-full bg-yellow-50 text-yellow-700 ring-1 ring-yellow-200">
-                                    <Avatar user={s} size="xs" />
-                                    {s.name}
-                                  </span>
-                                ))
-                              : <span className="text-xs text-gray-400">None</span>
-                            }
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                      </td>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        onClick={() => quickEdit(cfg)}
-                        title="แก้ไข Supervisor/Staff"
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition-colors"
-                      >
-                        <Briefcase size={14} />
-                      </button>
-                      <button
-                        onClick={() => quickEditStakeholder(cfg)}
-                        title="แก้ไข Stakeholders"
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 transition-colors"
-                      >
-                        <Users size={14} />
-                      </button>
-                      <button
-                        onClick={() => setConfirmDelete({ staffId: cfg.staffId, year: cfg.year, id: cfg.id })}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
+                      {/* Leave Quota */}
+                      <td className="px-4 py-2 align-middle text-center border-l border-gray-50 font-medium text-gray-600">
+                        {cfg.leaveQuota ?? DEFAULT_LEAVE_QUOTA}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-4 py-2 align-middle text-right border-l border-gray-50">
+                        <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => quickEdit(cfg)}
+                            title="แก้ไข Supervisor/Staff"
+                            className="p-1.5 rounded text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                          >
+                            <Briefcase size={14} />
+                          </button>
+                          <button
+                            onClick={() => quickEditStakeholder(cfg)}
+                            title="แก้ไข Stakeholders"
+                            className="p-1.5 rounded text-gray-500 hover:text-purple-600 hover:bg-purple-50 transition-colors"
+                          >
+                            <Users size={14} />
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete({ staffId: cfg.staffId, year: cfg.year, id: cfg.id })}
+                            title="ลบ Assignment"
+                            className="p-1.5 rounded text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

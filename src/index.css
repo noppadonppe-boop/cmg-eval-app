@@ -3,3 +3,59 @@
 * {
   font-family: 'Sarabun', sans-serif;
 }
+
+/* ─── Mobile-first responsive utilities ──────────────────────────────── */
+
+/* Smooth sidebar transitions on mobile */
+.sidebar-mobile-enter {
+  animation: slideInLeft 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+/* Prevent text highlight on touch devices */
+@media (hover: none) and (pointer: coarse) {
+  button, a, [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+}
+
+/* Better scrolling on mobile */
+@supports (-webkit-overflow-scrolling: touch) {
+  .overflow-y-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Mobile-safe viewport height (avoids address bar issues) */
+@supports (height: 100dvh) {
+  .h-screen {
+    height: 100dvh;
+  }
+}
+
+/* Responsive font sizes for heading */
+@media (max-width: 639px) {
+  h1 { font-size: 1.25rem !important; }
+  h2 { font-size: 1rem !important; }
+}
+
+/* Touch-friendly bigger tap targets on mobile */
+@media (max-width: 639px) {
+  select, input[type="text"], input[type="number"], input[type="email"], input[type="search"] {
+    min-height: 2.75rem;
+    font-size: 16px !important; /* prevents iOS zoom on input focus */
+  }
+}
+
+/* Scrollbar styling for sidebar on mobile */
+.sidebar-scroll::-webkit-scrollbar {
+  width: 3px;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.12);
+  border-radius: 3px;
+}

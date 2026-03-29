@@ -8,7 +8,7 @@ import UserManagement from './UserManagement'
 import {
   LayoutDashboard, ClipboardList, Target, BookOpen, Settings, Users,
   CalendarDays, ChevronDown, LogOut, UserCircle2, Menu, X, Bell,
-  Camera,
+  Camera, ChevronsLeft, ChevronsRight,
 } from 'lucide-react'
 import { updateUserProfile } from '../services/authService'
 
@@ -52,6 +52,7 @@ export default function Layout() {
   const location = useLocation()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [showUserMgmt, setShowUserMgmt] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
   const [profileDropOpen, setProfileDropOpen] = useState(false)
@@ -91,7 +92,7 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // Close sidebar on nav
+  // Close mobile sidebar on nav
   useEffect(() => {
     setSidebarOpen(false)
     setShowUserMgmt(false)
@@ -173,8 +174,150 @@ export default function Layout() {
     )
   }
 
-  // ── Sidebar content ────────────────────────────────────────────────────────
-  function SidebarContent() {
+  // ── Desktop Sidebar (expanded / collapsed) ──────────────────────────────
+  function DesktopSidebar() {
+    const collapsed = sidebarCollapsed
+
+    return (
+      <aside
+        className={`hidden md:flex flex-col bg-white border-r border-gray-200 shrink-0 transition-all duration-300 ease-in-out ${
+          collapsed ? 'w-[68px]' : 'w-60'
+        }`}
+      >
+        <div className="flex flex-col h-full">
+          {/* Logo */}
+          <div className={`flex items-center border-b border-gray-100 ${collapsed ? 'justify-center px-2 py-4' : 'gap-2.5 px-5 py-4'}`}>
+            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shrink-0">
+              <span className="text-white text-xs font-bold">CMG</span>
+            </div>
+            {!collapsed && (
+              <span className="font-semibold text-gray-900 text-sm whitespace-nowrap overflow-hidden">
+                Performance Eval
+              </span>
+            )}
+          </div>
+
+          {/* Profile Card */}
+          {collapsed ? (
+            <div className="flex justify-center py-4">
+              <ProfileAvatar user={userProfile || currentUser} size="md" />
+            </div>
+          ) : (
+            <div className="mx-3 mt-4 mb-2 p-3 bg-gradient-to-br from-indigo-50 to-white rounded-xl border border-indigo-100">
+              <div className="flex items-center gap-2.5">
+                <ProfileAvatar user={userProfile || currentUser} size="md" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate">{displayName}</p>
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {displayRoles.slice(0, 2).map((r) => (
+                      <span key={r} className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${ROLE_BADGE[r] || 'bg-gray-100 text-gray-600'}`}>
+                        {r}
+                      </span>
+                    ))}
+                    {displayRoles.length > 2 && (
+                      <span className="text-[10px] text-gray-400">+{displayRoles.length - 2}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Nav Links */}
+          <nav className={`flex-1 py-2 space-y-0.5 overflow-y-auto sidebar-scroll ${collapsed ? 'px-1.5' : 'px-3'}`}>
+            {!collapsed && (
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-2 py-1 mt-1">เมนูหลัก</p>
+            )}
+            {NAV_LINKS.filter((l) => navVisible[l.to] !== false).map((link) => {
+              const Icon = link.icon
+              const isActive = location.pathname === link.to
+              return (
+                <Link
+                  key={link.to}
+                  to={link.to}
+                  onClick={() => setShowUserMgmt(false)}
+                  title={collapsed ? link.label : undefined}
+                  className={`group relative flex items-center rounded-xl text-sm font-medium transition-all ${
+                    collapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-2.5'
+                  } ${
+                    isActive && !showUserMgmt
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 active:bg-gray-200'
+                  }`}
+                >
+                  <Icon size={18} className={`shrink-0 ${isActive && !showUserMgmt ? 'text-white' : 'text-gray-400'}`} />
+                  {!collapsed && <span className="whitespace-nowrap overflow-hidden">{link.label}</span>}
+                  {/* Tooltip on collapsed */}
+                  {collapsed && (
+                    <span className="absolute left-full ml-2 px-2.5 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-medium whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 shadow-lg">
+                      {link.label}
+                    </span>
+                  )}
+                </Link>
+              )
+            })}
+          </nav>
+
+          {/* User Management (MasterAdmin only) */}
+          {isMasterAdmin && (
+            <div className={`border-t border-gray-100 pt-2 pb-3 ${collapsed ? 'px-1.5' : 'px-3'}`}>
+              <button
+                onClick={() => setShowUserMgmt((v) => !v)}
+                title={collapsed ? 'จัดการผู้ใช้งาน' : undefined}
+                className={`group relative w-full flex items-center rounded-xl text-sm font-medium transition-all ${
+                  collapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-2.5'
+                } ${
+                  showUserMgmt
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                }`}
+              >
+                <Users size={18} className={`shrink-0 ${showUserMgmt ? 'text-white' : 'text-gray-400'}`} />
+                {!collapsed && <span className="flex-1 text-left whitespace-nowrap">จัดการผู้ใช้งาน</span>}
+                {!collapsed && pendingCount > 0 && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.2rem] text-center ${
+                    showUserMgmt ? 'bg-white text-indigo-600' : 'bg-yellow-400 text-white'
+                  }`}>
+                    {pendingCount}
+                  </span>
+                )}
+                {collapsed && pendingCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-yellow-400 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                    {pendingCount}
+                  </span>
+                )}
+                {collapsed && (
+                  <span className="absolute left-full ml-2 px-2.5 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-medium whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 shadow-lg">
+                    จัดการผู้ใช้งาน
+                  </span>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Collapse / Expand Toggle */}
+          <div className="border-t border-gray-100 px-3 py-2">
+            <button
+              onClick={() => setSidebarCollapsed(v => !v)}
+              className={`w-full flex items-center rounded-xl text-sm font-medium text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all ${
+                collapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-2'
+              }`}
+              title={collapsed ? 'ขยายเมนู' : 'ย่อเมนู'}
+            >
+              {collapsed
+                ? <ChevronsRight size={18} className="shrink-0" />
+                : <ChevronsLeft size={18} className="shrink-0" />
+              }
+              {!collapsed && <span className="text-xs whitespace-nowrap">ย่อเมนู</span>}
+            </button>
+          </div>
+        </div>
+      </aside>
+    )
+  }
+
+  // ── Mobile Sidebar Content (always expanded) ────────────────────────────
+  function MobileSidebarContent() {
     return (
       <div className="flex flex-col h-full">
         {/* Logo */}
@@ -206,7 +349,7 @@ export default function Layout() {
         </div>
 
         {/* Nav Links */}
-        <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
+        <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto sidebar-scroll">
           <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-2 py-1 mt-1">เมนูหลัก</p>
           {NAV_LINKS.filter((l) => navVisible[l.to] !== false).map((link) => {
             const Icon = link.icon
@@ -216,13 +359,13 @@ export default function Layout() {
                 key={link.to}
                 to={link.to}
                 onClick={() => { setSidebarOpen(false); setShowUserMgmt(false) }}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                className={`flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-all ${
                   isActive && !showUserMgmt
                     ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 active:bg-gray-200'
                 }`}
               >
-                <Icon size={16} className={isActive && !showUserMgmt ? 'text-white' : 'text-gray-400'} />
+                <Icon size={18} className={isActive && !showUserMgmt ? 'text-white' : 'text-gray-400'} />
                 {link.label}
               </Link>
             )
@@ -259,16 +402,21 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
       {/* ── Desktop Sidebar ──────────────────────────────────────────────── */}
-      <aside className="hidden md:flex flex-col w-60 bg-white border-r border-gray-200 shrink-0">
-        <SidebarContent />
-      </aside>
+      <DesktopSidebar />
 
       {/* ── Mobile Sidebar Overlay ───────────────────────────────────────── */}
       {sidebarOpen && (
         <>
-          <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={() => setSidebarOpen(false)} />
-          <aside className="fixed left-0 top-0 bottom-0 w-60 bg-white border-r border-gray-200 z-50 md:hidden flex flex-col shadow-2xl">
-            <SidebarContent />
+          <div className="fixed inset-0 bg-black/40 z-40 md:hidden backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
+          <aside className="fixed left-0 top-0 bottom-0 w-64 bg-white border-r border-gray-200 z-50 md:hidden flex flex-col shadow-2xl sidebar-mobile-enter">
+            {/* Close button inside sidebar */}
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 z-10"
+            >
+              <X size={18} />
+            </button>
+            <MobileSidebarContent />
           </aside>
         </>
       )}
@@ -373,7 +521,7 @@ export default function Layout() {
 
         {/* Main content */}
         <main className="flex-1 overflow-y-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
             {showUserMgmt ? <UserManagement /> : <Outlet />}
           </div>
         </main>

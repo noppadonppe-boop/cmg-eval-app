@@ -57,8 +57,6 @@ function normalizeFirebaseUser(u) {
   return { ...u, id: u.uid || u.id, name, role }
 }
 
-// Derive which parts + staffList this user can access.
-// "Supervisor" and "Stakeholder" are no longer user roles — they come from staffConfig assignments.
 function useEvalAccess() {
   const { data, currentUser, selectedYear } = useApp()
   const { role } = useRBAC()
@@ -72,97 +70,60 @@ function useEvalAccess() {
   }, [])
 
   const allUsers = firebaseUsers.length > 0 ? firebaseUsers : data.users
-
   const yearConfigs = data.staffConfigs.filter((c) => c.year === selectedYear)
 
-  // Staff this user supervises (assigned as supervisorId)
   const supervisedStaff = yearConfigs
     .filter((c) => c.supervisorId === currentUser.id)
     .map((c) => allUsers.find((u) => u.id === c.staffId))
     .filter(Boolean)
 
-  // Staff this user is a stakeholder for
   const stakeholderStaff = yearConfigs
     .filter((c) => (c.stakeholderIds || []).includes(currentUser.id))
     .map((c) => allUsers.find((u) => u.id === c.staffId))
     .filter(Boolean)
 
-  // Is this user themselves assigned as a staff member to be evaluated?
   const isAssignedAsStaff = yearConfigs.some((c) => c.staffId === currentUser.id)
-
   const isSupervisor = supervisedStaff.length > 0
   const isStakeholder = stakeholderStaff.length > 0
+  const hasAllStaffAccess = ['MasterAdmin', 'HR', 'HRM', 'MD', 'GM'].includes(role)
 
-  let parts = []
-  let staffList = []
-  // evaluatorRole determines how Part4 saves the record
-  let evaluatorRole = 'Staff'
+  const allStaffList = hasAllStaffAccess
+    ? yearConfigs.map((c) => allUsers.find((u) => u.id === c.staffId)).filter(Boolean)
+    : []
 
-  if (role === 'HR' || role === 'HRM') {
-    // HR/HRM: Part 1 Competency + Part 2 Discipline สำหรับ staff ทั้งหมด
-    parts = ['part1', 'part2']
-    staffList = yearConfigs
-      .map((c) => allUsers.find((u) => u.id === c.staffId))
-      .filter(Boolean)
-    evaluatorRole = 'HR'
-  } else if (role === 'MasterAdmin') {
-    parts = ['part1']
-    staffList = yearConfigs
-      .map((c) => allUsers.find((u) => u.id === c.staffId))
-      .filter(Boolean)
-    evaluatorRole = 'MD'
-  } else if (role === 'MD' || role === 'GM') {
-    // Exec read-only: part1 overview of all staff
-    parts = ['part1']
-    staffList = yearConfigs
-      .map((c) => allUsers.find((u) => u.id === c.staffId))
-      .filter(Boolean)
-    evaluatorRole = 'MD'
-  } else if (role === 'Staff') {
-    // A Staff user may have multiple evaluation contexts:
-    // 1) Self-assess (if assigned as staff in a config)
-    // 2) Supervisor (if assigned as supervisorId for others)
-    // 3) Stakeholder (if listed in stakeholderIds for others)
-    // We expose all parts that apply; staffList = union of all relevant staff
-    const partSet = new Set()
-    const staffMap = new Map()
-
-    partSet.add('part1')
-    partSet.add('part2')
-    partSet.add('part3')
-    partSet.add('part4')
-    staffMap.set(currentUser.id, currentUser)
-    if (isSupervisor) {
-      partSet.add('part1')
-      partSet.add('part2')  // Supervisor ดูขาด/ลามาสายของลูกน้องได้แต่แก้ไขไม่ได้
-      partSet.add('part3')
-      partSet.add('part4')
-      supervisedStaff.forEach((u) => staffMap.set(u.id, u))
-    }
-    if (isStakeholder) {
-      partSet.add('part1')
-      partSet.add('part4')
-      stakeholderStaff.forEach((u) => staffMap.set(u.id, u))
-    }
-    parts = ['part1', 'part2', 'part3', 'part4'].filter((p) => partSet.has(p))
-    staffList = [...staffMap.values()]
-    evaluatorRole = 'Staff'
+  const partSet = new Set()
+  if (isAssignedAsStaff) {
+    partSet.add('part1'); partSet.add('part2'); partSet.add('part3'); partSet.add('part4')
+  }
+  if (isSupervisor) {
+    partSet.add('part1'); partSet.add('part2'); partSet.add('part3'); partSet.add('part4')
+  }
+  if (isStakeholder) {
+    partSet.add('part1'); partSet.add('part4')
+  }
+  if (hasAllStaffAccess) {
+    partSet.add('part1');
+    if (['HR', 'HRM'].includes(role)) partSet.add('part2')
   }
 
-  // Compute evaluatorRole string for a specific staffId context
-  // Returns 'Supervisor' | 'Stakeholder' | 'Staff' | 'HR' | 'MD'
+  const parts = ['part1', 'part2', 'part3', 'part4'].filter((p) => partSet.has(p))
+
   const getEvaluatorRole = (staffId) => {
+    const cfg = yearConfigs.find((c) => c.staffId === staffId)
+    // Always check contextual relationship first!
+    if (cfg?.supervisorId === currentUser.id) return 'Supervisor'
+    if ((cfg?.stakeholderIds || []).includes(currentUser.id)) return 'Stakeholder'
+    if (staffId === currentUser.id) return 'Staff'
+    
+    // If no direct relationship, fallback to global role
     if (role === 'MasterAdmin') return 'MD'
     if (role === 'HR' || role === 'HRM') return 'HR'
     if (role === 'MD' || role === 'GM') return 'MD'
-    // Check if this user is supervisor for this specific staff
-    const cfg = yearConfigs.find((c) => c.staffId === staffId)
-    if (cfg?.supervisorId === currentUser.id) return 'Supervisor'
-    if ((cfg?.stakeholderIds || []).includes(currentUser.id)) return 'Stakeholder'
+    
     return 'Staff'
   }
 
-  return { parts, staffList, role, evaluatorRole, isSupervisor, isStakeholder, isAssignedAsStaff, supervisedStaff, stakeholderStaff, getEvaluatorRole, allUsers, yearConfigs }
+  return { parts, role, isSupervisor, isStakeholder, isAssignedAsStaff, supervisedStaff, stakeholderStaff, allStaffList, hasAllStaffAccess, getEvaluatorRole, allUsers, yearConfigs }
 }
 
 const PART_META = {
@@ -181,14 +142,16 @@ const PART_TAB_ACTIVE = {
 
 export default function EvalPage() {
   const { selectedYear, activeQuarter, currentUser, data, getEvaluation, getEvaluationForPart } = useApp()
-  const { role } = useRBAC()
-  const { parts, staffList, isSupervisor, isStakeholder, supervisedStaff, stakeholderStaff, getEvaluatorRole, allUsers, yearConfigs } = useEvalAccess()
+  const { role: rawRole } = useRBAC() // not used directly for rendering rules anymore to prevent overriding contextual mode
+  const { parts, role, isSupervisor, isStakeholder, isAssignedAsStaff, supervisedStaff, stakeholderStaff, allStaffList, hasAllStaffAccess, getEvaluatorRole, allUsers, yearConfigs } = useEvalAccess()
 
   const [activePart, setActivePart] = useState(null)
   const [selectedStaff, setSelectedStaff] = useState('')
+  const [viewMode, setViewMode] = useState('evaluate') // 'evaluate' | 'summary'
   const quarter = activeQuarter || 'Q1'
 
   const currentPart = activePart && parts.includes(activePart) ? activePart : (parts[0] ?? null)
+  
   const hasScorableKpis = (staffId) =>
     (data.kpis || []).some((k) =>
       k.staffId === staffId && k.year === selectedYear && k.quarter === quarter && k.status === 'Accepted'
@@ -196,56 +159,30 @@ export default function EvalPage() {
 
   const getSetupReadiness = (staffId) => {
     const competencySet = Array.isArray(COMPETENCY_LIST) && COMPETENCY_LIST.length > 0
-
     const disciplineSet = !!getEvaluationForPart(selectedYear, quarter, staffId, 'part2')
-
     const quarterKpis = (data.kpis || []).filter(
       (k) => k.staffId === staffId && k.year === selectedYear && k.quarter === quarter
     )
-    const kpiSetAndAcceptedAll3 =
-      quarterKpis.length === 3 && quarterKpis.every((k) => k.status === 'Accepted')
+    const kpiSetAndAcceptedAll3 = quarterKpis.length === 3 && quarterKpis.every((k) => k.status === 'Accepted')
 
-    const staff =
-      (allUsers || []).find((u) => u.id === staffId) ||
-      (data.users || []).find((u) => u.id === staffId) ||
-      null
+    const staff = (allUsers || []).find((u) => u.id === staffId) || (data.users || []).find((u) => u.id === staffId) || null
     const jdAttachmentSet = !!staff?.jdUrl?.trim()
 
     const cfg = (yearConfigs || []).find((c) => c.staffId === staffId) || null
     const knownIds = new Set([...(allUsers || []).map((u) => u.id), ...(data.users || []).map((u) => u.id)])
 
     const supervisorId = cfg?.supervisorId || ''
-    const supervisorSet =
-      !!supervisorId &&
-      supervisorId !== staffId &&
-      knownIds.has(supervisorId)
+    const supervisorSet = !!supervisorId && supervisorId !== staffId && knownIds.has(supervisorId)
 
     const stakeholderIds = Array.isArray(cfg?.stakeholderIds) ? cfg.stakeholderIds.filter(Boolean) : []
     const uniqueStakeholders = [...new Set(stakeholderIds)]
-    const stakeholdersSet =
-      stakeholderIds.length === 3 &&
-      uniqueStakeholders.length === 3 &&
-      uniqueStakeholders.every((id) => id && id !== staffId && id !== supervisorId && knownIds.has(id))
+    const stakeholdersSet = stakeholderIds.length === 3 && uniqueStakeholders.length === 3 && uniqueStakeholders.every((id) => id && id !== staffId && id !== supervisorId && knownIds.has(id))
 
     const hasSupervisorAndStakeholdersReady = supervisorSet && stakeholdersSet
 
-    const ready =
-      competencySet &&
-      disciplineSet &&
-      kpiSetAndAcceptedAll3 &&
-      jdAttachmentSet &&
-      hasSupervisorAndStakeholdersReady
+    const ready = competencySet && disciplineSet && kpiSetAndAcceptedAll3 && jdAttachmentSet && hasSupervisorAndStakeholdersReady
 
-    return {
-      ready,
-      competencySet,
-      disciplineSet,
-      kpiSetAndAcceptedAll3,
-      jdAttachmentSet,
-      supervisorSet,
-      stakeholdersSet,
-      hasSupervisorAndStakeholdersReady,
-    }
+    return { ready, competencySet, disciplineSet, kpiSetAndAcceptedAll3, jdAttachmentSet, supervisorSet, stakeholdersSet, hasSupervisorAndStakeholdersReady }
   }
 
   const getMissingSetupLabels = (staffId) => {
@@ -259,25 +196,24 @@ export default function EvalPage() {
     return missing
   }
 
-  const canOpenCard = (staffId) => {
-    if (role !== 'Staff') return true
-    return getSetupReadiness(staffId).ready
-  }
+  const canOpenCard = (staffId) => getSetupReadiness(staffId).ready
 
-  const getCardStatus = (staffId) => {
-    const ctxRole = getEvaluatorRole(staffId)
-    if (ctxRole === 'MD') {
+  const getCardStatus = (staffId, contextMode) => {
+    const isSummaryContext = contextMode === 'summary'
+    
+    if (isSummaryContext || (hasAllStaffAccess && !isSupervisor && !isStakeholder && !isAssignedAsStaff)) {
       const hasAny = (data.quarterlyEvaluations || []).some(
-        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter
+        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part !== 'part2'
       )
-      return { label: hasAny ? 'ประเมินแล้ว' : 'ยังไม่ประเมิน', tone: hasAny ? 'done' : 'todo' }
+      return { label: hasAny ? 'ประเมินแล้ว (มีข้อมูล)' : 'ยังไม่ประเมิน', tone: hasAny ? 'done' : 'todo' }
     }
 
+    const ctxRole = getEvaluatorRole(staffId)
     const needsPart3 = hasScorableKpis(staffId)
     const checks = []
+
     if (ctxRole === 'HR') {
       checks.push({ part: 'part1', evaluatorId: currentUser.id })
-      checks.push({ part: 'part2', evaluatorId: currentUser.id })
     } else if (ctxRole === 'Supervisor') {
       checks.push({ part: 'part1', evaluatorId: currentUser.id })
       if (needsPart3) checks.push({ part: 'part3_sup', evaluatorId: currentUser.id })
@@ -294,12 +230,14 @@ export default function EvalPage() {
     const isDone = checks.every((c) => !!getEvaluation(selectedYear, quarter, staffId, c.evaluatorId, c.part))
     return { label: isDone ? 'ประเมินแล้ว' : 'ยังไม่ประเมิน', tone: isDone ? 'done' : 'todo' }
   }
-  const selfCardStatus = canOpenCard(currentUser.id)
-    ? getCardStatus(currentUser.id)
-    : { label: 'ยังไม่พร้อม', detail: `ขาด: ${getMissingSetupLabels(currentUser.id).join(', ')}`, tone: 'notReady' }
 
-  // Access = has at least one part to show
-  if (parts.length === 0) {
+  const handleCardClick = (staffId, mode) => {
+    if (mode === 'evaluate' && !canOpenCard(staffId)) return
+    setSelectedStaff(staffId)
+    setViewMode(mode)
+  }
+
+  if (parts.length === 0 && !hasAllStaffAccess) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
         <div className="bg-gray-50 p-4 rounded-2xl mb-4">
@@ -313,15 +251,13 @@ export default function EvalPage() {
     )
   }
 
-  // Determine effective staffId
   const effectiveStaffId = selectedStaff
 
   const renderSectionContent = () => {
     if (!effectiveStaffId) {
       return (
         <>
-          {/* Quarter Selector - Top Right */}
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-4 sm:mb-8">
             <div className="flex-1" />
             <div className="flex items-center gap-4">
               <div>
@@ -337,71 +273,82 @@ export default function EvalPage() {
             </div>
           </div>
 
-          {/* Self-Assessment Section */}
-          {role === 'Staff' && (
-            <div className="mb-12">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-100">
-                  <User size={16} className="text-indigo-600" />
+          <div className="flex flex-col xl:flex-row gap-4 sm:gap-8 mb-8 sm:mb-12">
+            {isAssignedAsStaff && (
+              <div className="w-full xl:w-56 shrink-0">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-100">
+                    <User size={16} className="text-indigo-600" />
+                  </div>
+                  <h2 className="text-base sm:text-xl font-bold text-gray-900">ประเมินตนเอง</h2>
                 </div>
-                <h2 className="text-xl font-bold text-gray-900">ประเมินตนเอง</h2>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                <StaffMiniCard
-                  user={currentUser}
-                  isSelected={false}
-                  statusLabel={selfCardStatus.label}
-                  statusDetail={selfCardStatus.detail}
-                  statusTone={selfCardStatus.tone}
-                  onClick={canOpenCard(currentUser.id) ? () => setSelectedStaff(currentUser.id) : null}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Supervised Staff Section */}
-          {isSupervisor && supervisedStaff.length > 0 && (
-            <div className="mb-12">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-green-100">
-                  <Users size={16} className="text-green-600" />
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-1 gap-3">
+                  {(() => {
+                    const s = canOpenCard(currentUser.id)
+                      ? getCardStatus(currentUser.id, 'evaluate')
+                      : { label: 'ยังไม่พร้อม', detail: `ขาด: ${getMissingSetupLabels(currentUser.id).join(', ')}`, tone: 'notReady' }
+                    return (
+                      <StaffMiniCard
+                        key={currentUser.id}
+                        user={currentUser}
+                        isSelected={false}
+                        statusLabel={s.label}
+                        statusDetail={s.detail}
+                        statusTone={s.tone}
+                        onClick={canOpenCard(currentUser.id) ? () => handleCardClick(currentUser.id, 'evaluate') : null}
+                      />
+                    )
+                  })()}
                 </div>
-                <h2 className="text-xl font-bold text-gray-900">ประเมินผู้ใต้บังคับบัญชา</h2>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                {supervisedStaff.map((u) => {
-                  const s = canOpenCard(u.id)
-                    ? getCardStatus(u.id)
-                    : { label: 'ยังไม่พร้อม', detail: `ขาด: ${getMissingSetupLabels(u.id).join(', ')}`, tone: 'notReady' }
-                  return (
-                    <StaffMiniCard
-                      key={u.id}
-                      user={u}
-                      isSelected={false}
-                      statusLabel={s.label}
-                      statusDetail={s.detail}
-                      statusTone={s.tone}
-                      onClick={canOpenCard(u.id) ? () => setSelectedStaff(u.id) : null}
-                    />
-                  )
-                })}
-              </div>
-            </div>
-          )}
+            )}
 
-          {/* Stakeholder Staff Section */}
+            {isAssignedAsStaff && isSupervisor && supervisedStaff.length > 0 && (
+              <div className="hidden xl:block w-px self-stretch bg-gray-200"></div>
+            )}
+
+            {isSupervisor && supervisedStaff.length > 0 && (
+              <div className="flex-1 w-full min-w-0">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-green-100">
+                    <Users size={16} className="text-green-600" />
+                  </div>
+                  <h2 className="text-base sm:text-xl font-bold text-gray-900">ประเมินผู้ใต้บังคับบัญชา</h2>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5 gap-3">
+                  {supervisedStaff.map((u) => {
+                    const s = canOpenCard(u.id)
+                      ? getCardStatus(u.id, 'evaluate')
+                      : { label: 'ยังไม่พร้อม', detail: `ขาด: ${getMissingSetupLabels(u.id).join(', ')}`, tone: 'notReady' }
+                    return (
+                      <StaffMiniCard
+                        key={u.id}
+                        user={u}
+                        isSelected={false}
+                        statusLabel={s.label}
+                        statusDetail={s.detail}
+                        statusTone={s.tone}
+                        onClick={canOpenCard(u.id) ? () => handleCardClick(u.id, 'evaluate') : null}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           {isStakeholder && stakeholderStaff.length > 0 && (
             <div className="mb-12">
               <div className="flex items-center gap-2 mb-4">
                 <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-purple-100">
                   <Briefcase size={16} className="text-purple-600" />
                 </div>
-                <h2 className="text-xl font-bold text-gray-900">ประเมินผู้ที่มีส่วนร่วมการทำงาน</h2>
+                <h2 className="text-base sm:text-xl font-bold text-gray-900">ประเมินผู้ที่มีส่วนร่วมการทำงาน</h2>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 {stakeholderStaff.map((u) => {
                   const s = canOpenCard(u.id)
-                    ? getCardStatus(u.id)
+                    ? getCardStatus(u.id, 'evaluate')
                     : { label: 'ยังไม่พร้อม', detail: `ขาด: ${getMissingSetupLabels(u.id).join(', ')}`, tone: 'notReady' }
                   return (
                     <StaffMiniCard
@@ -411,7 +358,7 @@ export default function EvalPage() {
                       statusLabel={s.label}
                       statusDetail={s.detail}
                       statusTone={s.tone}
-                      onClick={canOpenCard(u.id) ? () => setSelectedStaff(u.id) : null}
+                      onClick={canOpenCard(u.id) ? () => handleCardClick(u.id, 'evaluate') : null}
                     />
                   )
                 })}
@@ -419,28 +366,44 @@ export default function EvalPage() {
             </div>
           )}
 
-          {role === 'MasterAdmin' && staffList.length > 0 && (
-            <div className="mb-12">
+          {hasAllStaffAccess && allStaffList.length > 0 && (
+            <div className="mb-12 border-t pt-8">
               <div className="flex items-center gap-2 mb-4">
                 <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gray-100">
                   <Users size={16} className="text-gray-700" />
                 </div>
-                <h2 className="text-xl font-bold text-gray-900">พนักงานทั้งหมด</h2>
+                <h2 className="text-base sm:text-xl font-bold text-gray-900 flex items-center gap-2 sm:gap-3">
+                  พนักงานทั้งหมด 
+                  <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-[10px] sm:text-xs font-semibold">สรุปคะแนน</span>
+                </h2>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                {staffList.map((u) => {
-                  const s = getCardStatus(u.id)
-                  return (
+                {(() => {
+                  const listWithScores = allStaffList.map((u) => {
+                    const s = getCardStatus(u.id, 'summary')
+                    const scores = getQuarterScores(data, u.id, selectedYear, quarter)
+                    return { u, s, total: scores?.total ?? null }
+                  })
+
+                  listWithScores.sort((a, b) => {
+                    const scoreA = a.total ?? -1
+                    const scoreB = b.total ?? -1
+                    return scoreB - scoreA
+                  })
+
+                  return listWithScores.map(({ u, s, total }) => (
                     <StaffMiniCard
                       key={u.id}
                       user={u}
                       isSelected={false}
                       statusLabel={s.label}
                       statusTone={s.tone}
-                      onClick={() => setSelectedStaff(u.id)}
+                      isSummaryCard={true}
+                      summaryScore={total}
+                      onClick={() => handleCardClick(u.id, 'summary')}
                     />
-                  )
-                })}
+                  ))
+                })()}
               </div>
             </div>
           )}
@@ -448,22 +411,18 @@ export default function EvalPage() {
       )
     }
 
-    const selectedStaffObj = supervisedStaff.find(s => s.id === effectiveStaffId) ||
-      stakeholderStaff.find(s => s.id === effectiveStaffId) ||
-      (role === 'Staff' && currentUser.id === effectiveStaffId ? currentUser : null) ||
-      (role === 'MasterAdmin' ? staffList.find((s) => s.id === effectiveStaffId) : null)
+    const selectedStaffObj = allUsers.find(s => s.id === effectiveStaffId)
 
     return (
       <>
-        {/* Back Button & Quarter Selector */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4 sm:mb-6">
           <button
             onClick={() => setSelectedStaff('')}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-sm font-medium text-gray-700 transition-all"
+            className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-xs sm:text-sm font-medium text-gray-700 transition-all"
           >
             ← กลับ
           </button>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Quarter</p>
               <span className="inline-flex px-4 py-1.5 rounded-lg border text-sm font-semibold bg-indigo-600 text-white border-indigo-600">
@@ -477,17 +436,16 @@ export default function EvalPage() {
           </div>
         </div>
 
-        {/* Selected Staff Card */}
         {selectedStaffObj && (
-          <div className="mb-6 p-4 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center gap-4">
+          <div className="mb-4 sm:mb-6 p-3 sm:p-4 rounded-lg bg-indigo-50 border border-indigo-200 flex flex-wrap items-center gap-3 sm:gap-4">
             {selectedStaffObj?.photoURL ? (
               <img
                 src={selectedStaffObj.photoURL}
                 alt=""
-                className="w-12 h-12 rounded-full object-cover ring-2 ring-white shadow shrink-0"
+                className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover ring-2 ring-white shadow shrink-0"
               />
             ) : (
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 ${ROLE_AVATAR_BG[selectedStaffObj?.role] || 'bg-indigo-500'}`}>
+              <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-white font-bold text-xs sm:text-sm shrink-0 ${ROLE_AVATAR_BG[selectedStaffObj?.role] || 'bg-indigo-500'}`}>
                 {(() => {
                   if (selectedStaffObj?.firstName && selectedStaffObj?.lastName)
                     return (selectedStaffObj.firstName[0] + selectedStaffObj.lastName[0]).toUpperCase()
@@ -506,14 +464,24 @@ export default function EvalPage() {
                 {Array.isArray(selectedStaffObj?.positions) && selectedStaffObj.positions.includes('Supervisor') ? 'Supervisor' : 'Staff'}
               </p>
             </div>
+            {viewMode === 'summary' && (
+              <div className="ml-auto px-2 sm:px-3 py-1 bg-white border border-gray-200 text-gray-700 text-[10px] sm:text-xs rounded-full font-bold shadow-sm">
+                โหมดดูสรุปคะแนน
+              </div>
+            )}
+            {viewMode === 'evaluate' && (
+              <div className="ml-auto px-2 sm:px-3 py-1 bg-indigo-600 text-white text-[10px] sm:text-xs rounded-full font-bold shadow-sm">
+                โหมดการประเมิน
+              </div>
+            )}
           </div>
         )}
 
-        {role === 'MasterAdmin' && selectedStaffObj && (
+        {viewMode === 'summary' ? (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-4">
             <div className="flex items-center justify-between flex-wrap gap-3">
               <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">สรุปคะแนน</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">สรุปคะแนนรอบการประเมินนี้</p>
                 <p className="text-sm font-semibold text-gray-900">{selectedYear} · {quarter}</p>
               </div>
               {(() => {
@@ -521,7 +489,7 @@ export default function EvalPage() {
                 const total = s?.total ?? null
                 return (
                   <div className="text-right">
-                    <p className="text-xs text-gray-400">Total</p>
+                    <p className="text-xs text-gray-400">Total Score</p>
                     <p className="text-2xl font-extrabold text-indigo-600">{total ?? '—'} <span className="text-xs font-semibold text-gray-400">/ 100</span></p>
                   </div>
                 )
@@ -531,13 +499,13 @@ export default function EvalPage() {
             {(() => {
               const s = getQuarterScores(data, effectiveStaffId, selectedYear, quarter)
               const row = (label, val, max, cls) => (
-                <div className="flex items-center justify-between py-2">
-                  <span className="text-xs font-semibold text-gray-700">{label}</span>
-                  <span className={`text-xs font-bold ${cls}`}>{val ?? '—'}{val != null ? ` / ${max}` : ''}</span>
+                <div className="flex items-center justify-between py-2.5">
+                  <span className="text-sm font-semibold text-gray-700">{label}</span>
+                  <span className={`text-sm font-bold ${cls}`}>{val ?? '—'}{val != null ? ` / ${max}` : ''}</span>
                 </div>
               )
               return (
-                <div className="mt-4 divide-y divide-gray-100">
+                <div className="mt-4 divide-y divide-gray-100 bg-gray-50 p-4 rounded-xl border border-gray-100">
                   {row('Part 1 — Competency', s?.part1 ?? null, 30, 'text-indigo-600')}
                   {row('Part 2 — Discipline', s?.part2 ?? null, 20, 'text-green-600')}
                   {row('Part 3 — KPI', s?.part3 ?? null, 30, 'text-blue-600')}
@@ -551,26 +519,26 @@ export default function EvalPage() {
                 (e) => e.staffId === effectiveStaffId && e.year === selectedYear && e.quarter === quarter
               )
               if (evals.length === 0) {
-                return <p className="mt-4 text-xs text-gray-400">ยังไม่มีข้อมูลการประเมินใน Quarter นี้</p>
+                return <p className="mt-6 text-sm text-gray-400 text-center py-4 bg-gray-50 rounded-lg">ยังไม่มีข้อมูลการประเมินแบบแยกส่วนใน Quarter นี้</p>
               }
               const part1 = evals.filter((e) => e.part === 'part1')
               const part2 = evals.filter((e) => e.part === 'part2')
               const part3 = evals.filter((e) => e.part === 'part3_staff' || e.part === 'part3_sup')
               const part4 = evals.filter((e) => e.part === 'part4')
               const section = (title, items) => (
-                <div className="mt-5">
-                  <p className="text-xs font-bold text-gray-700 mb-2">{title}</p>
+                <div className="mt-6">
+                  <p className="text-sm font-bold text-gray-800 mb-3">{title}</p>
                   {items.length === 0 ? (
-                    <p className="text-xs text-gray-400">—</p>
+                    <p className="text-sm text-gray-400 italic">ยังไม่มีใครประเมินส่วนนี้</p>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {items.map((e) => (
-                        <div key={e.id || `${e.part}_${e.evaluatorRole}_${e.evaluatorId}`} className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-xs font-semibold text-gray-800">{e.evaluatorRole || '—'}</span>
-                            <span className="text-xs font-bold text-gray-700">{e.scaledScore ?? e.rawTotal ?? e.score ?? '—'}</span>
+                        <div key={e.id || `${e.part}_${e.evaluatorRole}_${e.evaluatorId}`} className="px-4 py-3 rounded-xl border border-gray-200 bg-white shadow-sm">
+                          <div className="flex items-center justify-between gap-3 mb-1">
+                            <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">ผู้ประเมิน: {e.evaluatorRole || '—'}</span>
+                            <span className="text-sm font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{e.scaledScore ?? e.rawTotal ?? e.score ?? '—'}</span>
                           </div>
-                          {e.comment && <p className="text-xs text-gray-500 mt-1">{e.comment}</p>}
+                          {e.comment && <p className="text-sm text-gray-700 bg-gray-50 p-2 rounded-lg mt-2 font-medium">"{e.comment}"</p>}
                         </div>
                       ))}
                     </div>
@@ -578,123 +546,116 @@ export default function EvalPage() {
                 </div>
               )
               return (
-                <>
-                  {section('รายละเอียด Part 1', part1)}
-                  {section('รายละเอียด Part 2', part2)}
-                  {section('รายละเอียด Part 3', part3)}
-                  {section('รายละเอียด Part 4', part4)}
-                </>
+                <div className="mt-8 border-t pt-2">
+                  <h3 className="text-base font-bold text-gray-900 mb-2">รายละเอียดคะแนนแต่ละคน</h3>
+                  {section('Part 1 — ความสามารถ (Competency)', part1)}
+                  {section('Part 2 — วินัยการทำงาน (Discipline)', part2)}
+                  {section('Part 3 — ผลงาน (KPI)', part3)}
+                  {section('Part 4 — ลักษณะงาน (Job Description)', part4)}
+                </div>
               )
             })()}
           </div>
-        )}
-
-        {role === 'MasterAdmin' && (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-            <p className="text-sm font-semibold text-gray-900">ดูรายละเอียดคะแนนได้จากสรุปด้านบน</p>
-            <p className="text-xs text-gray-500 mt-1">Role MasterAdmin เป็นโหมดดูคะแนน (read-only) เพื่อหลีกเลี่ยงการบันทึกทับข้อมูลการประเมิน</p>
-          </div>
-        )}
-
-        {/* Part Tabs */}
-        {role !== 'MasterAdmin' && parts.length > 1 && (
-          <div className="flex gap-2 flex-wrap mb-4">
-            {parts.map((p) => {
-              const meta = PART_META[p]
-              const isActive = currentPart === p
-              return (
-                <button
-                  key={p}
-                  onClick={() => setActivePart(p)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-all ${
-                    isActive ? PART_TAB_ACTIVE[p] : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  {meta.icon}
-                  {meta.label}
-                  <span className={`text-xs font-bold ml-1 ${isActive ? 'opacity-80' : 'text-gray-400'}`}>
-                    {meta.pts}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-        )}
-
-        {/* Single part label when only one */}
-        {role !== 'MasterAdmin' && parts.length === 1 && (
-          <div className="flex items-center gap-2 mb-4">
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold ${PART_TAB_ACTIVE[parts[0]]}`}>
-              {PART_META[parts[0]]?.icon}
-              {PART_META[parts[0]]?.label}
-              <span className="text-xs font-bold opacity-80 ml-1">{PART_META[parts[0]]?.pts}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Part Content */}
-        {role !== 'MasterAdmin' && (() => {
-          const ctxRole = getEvaluatorRole(effectiveStaffId)
-          const isSupervisorForStaff = ctxRole === 'Supervisor'
-          const canSeeKpi = isSupervisorForStaff || (ctxRole === 'Staff' && effectiveStaffId === currentUser.id)
-          return (
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-              {currentPart === 'part1' && (
-                <Part1Competency
-                  staffId={effectiveStaffId}
-                  quarter={quarter}
-                  year={selectedYear}
-                  evaluatorRole={ctxRole}
-                />
-              )}
-              {currentPart === 'part2' && (
-                <Part2Discipline
-                  staffId={effectiveStaffId}
-                  quarter={quarter}
-                  year={selectedYear}
-                />
-              )}
-              {currentPart === 'part3' && canSeeKpi && (
-                <Part3KpiEval
-                  staffId={effectiveStaffId}
-                  quarter={quarter}
-                  year={selectedYear}
-                  evaluatorRole={ctxRole}
-                  isSupervisor={isSupervisorForStaff}
-                />
-              )}
-              {currentPart === 'part3' && !canSeeKpi && (
-                <div className="py-10 text-center">
-                  <Target size={32} className="text-gray-200 mx-auto mb-3" />
-                  <p className="text-sm text-gray-400 font-medium">Part 3 — KPI: ไม่สามารถเข้าถึงในบริบทนี้</p>
+        ) : (
+          <>
+            {parts.length > 1 && (
+              <div className="flex gap-2 flex-wrap mb-4">
+                {parts.map((p) => {
+                  const meta = PART_META[p]
+                  const isActive = currentPart === p
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setActivePart(p)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-all ${
+                        isActive ? PART_TAB_ACTIVE[p] : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      {meta.icon}
+                      {meta.label}
+                      <span className={`text-xs font-bold ml-1 ${isActive ? 'opacity-80' : 'text-gray-400'}`}>
+                        {meta.pts}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            
+            {parts.length === 1 && (
+              <div className="flex items-center gap-2 mb-4">
+                <div className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold ${PART_TAB_ACTIVE[parts[0]]}`}>
+                  {PART_META[parts[0]]?.icon}
+                  {PART_META[parts[0]]?.label}
+                  <span className="text-xs font-bold opacity-80 ml-1">{PART_META[parts[0]]?.pts}</span>
                 </div>
-              )}
-              {currentPart === 'part4' && (
-                <Part4JobDescription
-                  staffId={effectiveStaffId}
-                  quarter={quarter}
-                  year={selectedYear}
-                  evaluatorRole={ctxRole}
-                />
-              )}
-            </div>
-          )
-        })()}
+              </div>
+            )}
+
+            {(() => {
+              const ctxRole = getEvaluatorRole(effectiveStaffId)
+              const isSupervisorForStaff = ctxRole === 'Supervisor'
+              // HR shouldn't edit KPI directly unless they are the supervisor.
+              const canSeeKpi = isSupervisorForStaff || (ctxRole === 'Staff' && effectiveStaffId === currentUser.id)
+              return (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                  {currentPart === 'part1' && (
+                    <Part1Competency
+                      staffId={effectiveStaffId}
+                      quarter={quarter}
+                      year={selectedYear}
+                      evaluatorRole={ctxRole}
+                    />
+                  )}
+                  {currentPart === 'part2' && (
+                    <Part2Discipline
+                      staffId={effectiveStaffId}
+                      quarter={quarter}
+                      year={selectedYear}
+                    />
+                  )}
+                  {currentPart === 'part3' && canSeeKpi && (
+                    <Part3KpiEval
+                      staffId={effectiveStaffId}
+                      quarter={quarter}
+                      year={selectedYear}
+                      evaluatorRole={ctxRole}
+                      isSupervisor={isSupervisorForStaff}
+                    />
+                  )}
+                  {currentPart === 'part3' && !canSeeKpi && (
+                    <div className="py-10 text-center">
+                      <Target size={32} className="text-gray-200 mx-auto mb-3" />
+                      <p className="text-sm text-gray-400 font-medium">Part 3 — KPI: ไม่สามารถเข้าถึงในบริบทนี้</p>
+                    </div>
+                  )}
+                  {currentPart === 'part4' && (
+                    <Part4JobDescription
+                      staffId={effectiveStaffId}
+                      quarter={quarter}
+                      year={selectedYear}
+                      evaluatorRole={ctxRole}
+                    />
+                  )}
+                </div>
+              )
+            })()}
+          </>
+        )}
       </>
     )
   }
 
   return (
-    <div className="space-y-6">
-      {/* Page Header */}
+    <div className="space-y-4 sm:space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3">
           <div className="bg-indigo-50 p-2.5 rounded-xl">
             <ClipboardList size={22} className="text-indigo-600" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Evaluation Forms</h1>
-            <p className="text-gray-500 text-sm mt-0.5">Parts 1, 2, 3 &amp; 4 — Competency, Discipline, KPI, Job Description</p>
+            <h1 className="text-lg sm:text-2xl font-bold text-gray-900">Evaluation Forms</h1>
+            <p className="text-gray-500 text-xs sm:text-sm mt-0.5 hidden sm:block">Parts 1, 2, 3 &amp; 4 — Competency, Discipline, KPI, Job Description</p>
           </div>
         </div>
         <span className={`text-xs font-semibold px-2.5 py-1.5 rounded-full ring-1 ${ROLE_BADGE_CLASSES[role]}`}>
@@ -702,8 +663,7 @@ export default function EvalPage() {
         </span>
       </div>
 
-      {/* No access message */}
-      {parts.length === 0 ? (
+      {parts.length === 0 && !hasAllStaffAccess ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="bg-gray-50 p-4 rounded-2xl mb-4">
             <ShieldOff size={32} className="text-gray-300" />
