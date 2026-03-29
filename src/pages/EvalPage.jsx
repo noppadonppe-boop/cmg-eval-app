@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext'
 import useRBAC, { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../hooks/useRBAC'
 import { subscribeAllUsers } from '../services/authService'
 import Part1Competency, { COMPETENCY_LIST } from '../components/eval/Part1Competency'
-import Part2Discipline from '../components/eval/Part2Discipline'
+import Part2Acknowledgment from '../components/eval/Part2Acknowledgment'
 import Part3KpiEval from '../components/eval/Part3KpiEval'
 import Part4JobDescription from '../components/eval/Part4JobDescription'
 import StaffMiniCard from '../components/eval/StaffMiniCard'
@@ -148,9 +148,17 @@ export default function EvalPage() {
   const [activePart, setActivePart] = useState(null)
   const [selectedStaff, setSelectedStaff] = useState('')
   const [viewMode, setViewMode] = useState('evaluate') // 'evaluate' | 'summary'
+  const [evaluatorContext, setEvaluatorContext] = useState(null)
   const quarter = activeQuarter || 'Q1'
 
   const currentPart = activePart && parts.includes(activePart) ? activePart : (parts[0] ?? null)
+  
+  // Filter parts based on evaluator context
+  const availableParts = evaluatorContext === 'stakeholder' 
+    ? parts.filter(p => p === 'part1' || p === 'part4')  // Stakeholder only sees Part 1 and Part 4
+    : parts
+  
+  const currentFilteredPart = activePart && availableParts.includes(activePart) ? activePart : (availableParts[0] ?? null)
   
   const hasScorableKpis = (staffId) =>
     (data.kpis || []).some((k) =>
@@ -176,7 +184,7 @@ export default function EvalPage() {
 
     const stakeholderIds = Array.isArray(cfg?.stakeholderIds) ? cfg.stakeholderIds.filter(Boolean) : []
     const uniqueStakeholders = [...new Set(stakeholderIds)]
-    const stakeholdersSet = stakeholderIds.length === 3 && uniqueStakeholders.length === 3 && uniqueStakeholders.every((id) => id && id !== staffId && id !== supervisorId && knownIds.has(id))
+    const stakeholdersSet = stakeholderIds.length === 3 && uniqueStakeholders.length === 3 && uniqueStakeholders.every((id) => id && id !== staffId && knownIds.has(id))
 
     const hasSupervisorAndStakeholdersReady = supervisorSet && stakeholdersSet
 
@@ -198,43 +206,67 @@ export default function EvalPage() {
 
   const canOpenCard = (staffId) => getSetupReadiness(staffId).ready
 
-  const getCardStatus = (staffId, contextMode) => {
-    const isSummaryContext = contextMode === 'summary'
-    
-    if (isSummaryContext || (hasAllStaffAccess && !isSupervisor && !isStakeholder && !isAssignedAsStaff)) {
-      const hasAny = (data.quarterlyEvaluations || []).some(
-        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part !== 'part2'
-      )
-      return { label: hasAny ? 'ประเมินแล้ว (มีข้อมูล)' : 'ยังไม่ประเมิน', tone: hasAny ? 'done' : 'todo' }
+  const hasPartEvaluation = (staffId, part, evaluatorId = null, evaluatorRole = null) => {
+    const rows = (data.quarterlyEvaluations || []).filter(
+      (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === part
+    )
+    if (evaluatorId != null) {
+      return rows.some((e) => e.evaluatorId === evaluatorId && (evaluatorRole ? e.evaluatorRole === evaluatorRole : true))
     }
-
-    const ctxRole = getEvaluatorRole(staffId)
-    const needsPart3 = hasScorableKpis(staffId)
-    const checks = []
-
-    if (ctxRole === 'HR') {
-      checks.push({ part: 'part1', evaluatorId: currentUser.id })
-    } else if (ctxRole === 'Supervisor') {
-      checks.push({ part: 'part1', evaluatorId: currentUser.id })
-      if (needsPart3) checks.push({ part: 'part3_sup', evaluatorId: currentUser.id })
-      checks.push({ part: 'part4', evaluatorId: currentUser.id })
-    } else if (ctxRole === 'Stakeholder') {
-      checks.push({ part: 'part1', evaluatorId: currentUser.id })
-      checks.push({ part: 'part4', evaluatorId: currentUser.id })
-    } else {
-      checks.push({ part: 'part1', evaluatorId: currentUser.id })
-      if (needsPart3) checks.push({ part: 'part3_staff', evaluatorId: staffId })
-      checks.push({ part: 'part4', evaluatorId: currentUser.id })
-    }
-
-    const isDone = checks.every((c) => !!getEvaluation(selectedYear, quarter, staffId, c.evaluatorId, c.part))
-    return { label: isDone ? 'ประเมินแล้ว' : 'ยังไม่ประเมิน', tone: isDone ? 'done' : 'todo' }
+    return rows.length > 0
   }
 
-  const handleCardClick = (staffId, mode) => {
+  const getCardStatus = (staffId, contextMode, evaluatorContext = null) => {
+    const isSummaryContext = contextMode === 'summary'
+    
+    // For summary or all-staff access, check if all 4 parts have evaluations
+    if (isSummaryContext || (hasAllStaffAccess && !isSupervisor && !isStakeholder && !isAssignedAsStaff)) {
+      const part1Done = (data.quarterlyEvaluations || []).some(
+        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === 'part1'
+      )
+      const part2Done = (data.quarterlyEvaluations || []).some(
+        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === 'part2'
+      )
+      const part3Done = (data.quarterlyEvaluations || []).some(
+        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && (e.part === 'part3_staff' || e.part === 'part3_sup')
+      )
+      const part4Done = (data.quarterlyEvaluations || []).some(
+        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === 'part4'
+      )
+      const allDone = part1Done && part2Done && part3Done && part4Done
+      return { label: allDone ? 'ประเมินครบแล้ว (4/4)' : 'ยังไม่ประเมินครบ', tone: allDone ? 'done' : 'todo' }
+    }
+
+    const ctxRole = evaluatorContext === 'stakeholder'
+      ? 'Stakeholder'
+      : evaluatorContext === 'supervisor'
+        ? 'Supervisor'
+        : getEvaluatorRole(staffId)
+
+    const part1Done = hasPartEvaluation(staffId, 'part1', currentUser.id, ctxRole)
+    const part2Done = hasPartEvaluation(staffId, 'part2')
+    const part3Done = evaluatorContext === 'stakeholder'
+      ? true
+      : (ctxRole === 'Staff'
+        ? hasPartEvaluation(staffId, 'part3_staff', staffId, 'Staff')
+        : hasPartEvaluation(staffId, 'part3_sup', currentUser.id, 'Supervisor'))
+    const part4Done = hasPartEvaluation(staffId, 'part4', currentUser.id, ctxRole)
+
+    const completedChecks = [part1Done, part2Done, part3Done, part4Done].filter(Boolean).length
+    const totalChecks = 4
+    const isDone = completedChecks >= totalChecks
+    
+    return { 
+      label: isDone ? 'ประเมินครบแล้ว' : `ประเมินแล้ว (${completedChecks}/${totalChecks})`, 
+      tone: isDone ? 'done' : 'todo' 
+    }
+  }
+
+  const handleCardClick = (staffId, mode, context = null) => {
     if (mode === 'evaluate' && !canOpenCard(staffId)) return
     setSelectedStaff(staffId)
     setViewMode(mode)
+    setEvaluatorContext(context) // Store evaluator context
   }
 
   if (parts.length === 0 && !hasAllStaffAccess) {
@@ -318,7 +350,7 @@ export default function EvalPage() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5 gap-3">
                   {supervisedStaff.map((u) => {
                     const s = canOpenCard(u.id)
-                      ? getCardStatus(u.id, 'evaluate')
+                      ? getCardStatus(u.id, 'evaluate', 'supervisor')
                       : { label: 'ยังไม่พร้อม', detail: `ขาด: ${getMissingSetupLabels(u.id).join(', ')}`, tone: 'notReady' }
                     return (
                       <StaffMiniCard
@@ -328,7 +360,8 @@ export default function EvalPage() {
                         statusLabel={s.label}
                         statusDetail={s.detail}
                         statusTone={s.tone}
-                        onClick={canOpenCard(u.id) ? () => handleCardClick(u.id, 'evaluate') : null}
+                        contextRole="ลูกน้อง"
+                        onClick={canOpenCard(u.id) ? () => handleCardClick(u.id, 'evaluate', 'supervisor') : null}
                       />
                     )
                   })}
@@ -348,7 +381,7 @@ export default function EvalPage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 {stakeholderStaff.map((u) => {
                   const s = canOpenCard(u.id)
-                    ? getCardStatus(u.id, 'evaluate')
+                    ? getCardStatus(u.id, 'evaluate', 'stakeholder')
                     : { label: 'ยังไม่พร้อม', detail: `ขาด: ${getMissingSetupLabels(u.id).join(', ')}`, tone: 'notReady' }
                   return (
                     <StaffMiniCard
@@ -358,7 +391,8 @@ export default function EvalPage() {
                       statusLabel={s.label}
                       statusDetail={s.detail}
                       statusTone={s.tone}
-                      onClick={canOpenCard(u.id) ? () => handleCardClick(u.id, 'evaluate') : null}
+                      contextRole="Stakeholder"
+                      onClick={canOpenCard(u.id) ? () => handleCardClick(u.id, 'evaluate', 'stakeholder') : null}
                     />
                   )
                 })}
@@ -558,11 +592,11 @@ export default function EvalPage() {
           </div>
         ) : (
           <>
-            {parts.length > 1 && (
+            {availableParts.length > 1 && (
               <div className="flex gap-2 flex-wrap mb-4">
-                {parts.map((p) => {
+                {availableParts.map((p) => {
                   const meta = PART_META[p]
-                  const isActive = currentPart === p
+                  const isActive = currentFilteredPart === p
                   return (
                     <button
                       key={p}
@@ -582,59 +616,90 @@ export default function EvalPage() {
               </div>
             )}
             
-            {parts.length === 1 && (
+            {availableParts.length === 1 && (
               <div className="flex items-center gap-2 mb-4">
-                <div className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold ${PART_TAB_ACTIVE[parts[0]]}`}>
-                  {PART_META[parts[0]]?.icon}
-                  {PART_META[parts[0]]?.label}
-                  <span className="text-xs font-bold opacity-80 ml-1">{PART_META[parts[0]]?.pts}</span>
+                <div className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold ${PART_TAB_ACTIVE[availableParts[0]]}`}>
+                  {PART_META[availableParts[0]]?.icon}
+                  {PART_META[availableParts[0]]?.label}
+                  <span className="text-xs font-bold opacity-80 ml-1">{PART_META[availableParts[0]]?.pts}</span>
                 </div>
               </div>
             )}
 
             {(() => {
-              const ctxRole = getEvaluatorRole(effectiveStaffId)
+              // Use evaluatorContext if available, otherwise fallback to getEvaluatorRole
+              const ctxRole = evaluatorContext === 'stakeholder' ? 'Stakeholder' : 
+                             evaluatorContext === 'supervisor' ? 'Supervisor' : 
+                             getEvaluatorRole(effectiveStaffId)
               const isSupervisorForStaff = ctxRole === 'Supervisor'
               // HR shouldn't edit KPI directly unless they are the supervisor.
               const canSeeKpi = isSupervisorForStaff || (ctxRole === 'Staff' && effectiveStaffId === currentUser.id)
+              
+              // Navigation callbacks for auto-flow
+              const goToPart2 = () => {
+                if (evaluatorContext === 'stakeholder') {
+                  setActivePart('part4') // Skip to Part 4 for Stakeholder
+                } else {
+                  setActivePart('part2')
+                }
+              }
+              const goToPart3 = () => setActivePart('part3')
+              const goToPart4 = () => setActivePart('part4')
+              const finishEvaluation = () => {
+                setSelectedStaff('')
+                setActivePart(null)
+                setEvaluatorContext(null) // Clear context when finishing
+              }
+              
               return (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                  {currentPart === 'part1' && (
+                  {currentFilteredPart === 'part1' && (
                     <Part1Competency
+                      key={`part1-${effectiveStaffId}-${quarter}-${selectedYear}-${ctxRole}`}
                       staffId={effectiveStaffId}
                       quarter={quarter}
                       year={selectedYear}
                       evaluatorRole={ctxRole}
+                      evaluatorContext={evaluatorContext}
+                      onComplete={goToPart2}
                     />
                   )}
-                  {currentPart === 'part2' && (
-                    <Part2Discipline
+                  {currentFilteredPart === 'part2' && (
+                    <Part2Acknowledgment
+                      key={`part2-${effectiveStaffId}-${quarter}-${selectedYear}-${ctxRole}`}
                       staffId={effectiveStaffId}
                       quarter={quarter}
                       year={selectedYear}
+                      evaluatorRole={ctxRole}
+                      onComplete={goToPart3}
                     />
                   )}
-                  {currentPart === 'part3' && canSeeKpi && (
+                  {currentFilteredPart === 'part3' && canSeeKpi && (
                     <Part3KpiEval
+                      key={`part3-${effectiveStaffId}-${quarter}-${selectedYear}-${isSupervisorForStaff ? 'sup' : 'staff'}`}
                       staffId={effectiveStaffId}
                       quarter={quarter}
                       year={selectedYear}
                       evaluatorRole={ctxRole}
                       isSupervisor={isSupervisorForStaff}
+                      onComplete={goToPart4}
                     />
                   )}
-                  {currentPart === 'part3' && !canSeeKpi && (
+                  {currentFilteredPart === 'part3' && !canSeeKpi && (
                     <div className="py-10 text-center">
                       <Target size={32} className="text-gray-200 mx-auto mb-3" />
                       <p className="text-sm text-gray-400 font-medium">Part 3 — KPI: ไม่สามารถเข้าถึงในบริบทนี้</p>
                     </div>
                   )}
-                  {currentPart === 'part4' && (
+                  {currentFilteredPart === 'part4' && (
                     <Part4JobDescription
+                      key={`part4-${effectiveStaffId}-${quarter}-${selectedYear}-${ctxRole}`}
                       staffId={effectiveStaffId}
                       quarter={quarter}
                       year={selectedYear}
                       evaluatorRole={ctxRole}
+                      evaluatorContext={evaluatorContext}
+                      onComplete={finishEvaluation}
                     />
                   )}
                 </div>

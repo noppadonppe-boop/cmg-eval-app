@@ -151,13 +151,17 @@ function CompetencyRow({ num, item, score, comment, onChange, onCommentChange, d
   )
 }
 
-export default function Part1Competency({ staffId, quarter, year, evaluatorRole }) {
+export default function Part1Competency({ staffId, quarter, year, evaluatorRole, evaluatorContext, onComplete }) {
   const { currentUser, saveEvaluation, getEvaluation, getUserById, data } = useApp()
 
   const competencyList = getCompetencyList(data)
   const maxRaw = competencyList.length * SCALE_MAX
 
-  const existing = getEvaluation(year, quarter, staffId, currentUser.id, 'part1')
+  // Load evaluation data filtered by evaluatorRole
+  const allEvaluations = data.quarterlyEvaluations.filter(
+    (e) => e.staffId === staffId && e.year === year && e.quarter === quarter && e.part === 'part1' && e.evaluatorId === currentUser.id
+  )
+  const existing = allEvaluations.find(e => e.evaluatorRole === evaluatorRole)
 
   const buildInitial = (existing) => {
     if (!existing?.scores) {
@@ -208,6 +212,8 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
     })
     setSaved(true)
     setErrors([])
+    // Auto-navigate to Part 2 after save
+    if (onComplete) onComplete()
   }
 
   // Preview weighted score

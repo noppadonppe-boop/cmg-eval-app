@@ -68,10 +68,10 @@ function UserAvatar({ user, size = 'md' }) {
   )
 }
 
-export default function StaffMiniCard({ user, isSelected = false, onClick, statusLabel, statusDetail, statusTone = 'todo', isSummaryCard = false, summaryScore = null }) {
+export default function StaffMiniCard({ user, isSelected = false, onClick, statusLabel, statusDetail, statusTone = 'todo', isSummaryCard = false, summaryScore = null, contextRole = null }) {
   const displayName = getUserDisplayName(user)
   const role = getPrimaryRole(user)
-  const position = getPositionLabel(user)
+  const position = contextRole || getPositionLabel(user) // Use contextRole if provided
   const badgeClass = ROLE_BADGE_CLASSES[role] || 'bg-gray-100 text-gray-600 ring-gray-200'
 
   const isDisabled = typeof onClick !== 'function'

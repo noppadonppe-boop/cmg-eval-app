@@ -4,8 +4,7 @@ import useRBAC, { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../hooks/useRBAC'
 import { subscribeAllUsers } from '../services/authService'
 import {
   Target, PlusCircle, CheckCircle2, XCircle, Clock, Pencil, Trash2,
-  AlertCircle, Check, X, ChevronDown, ChevronUp, Filter, Eye, Save,
-  Info, Star, Users, UserCircle2
+  AlertCircle, Check, X, Filter, Eye, Info, Users, UserCircle2
 } from 'lucide-react'
 
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4']
@@ -99,15 +98,13 @@ function ScoreSlider({ value, onChange, disabled, label, maxScore }) {
 // ─── Supervisor View ─────────────────────────────────────────────────────────
 
 function SupervisorView({ allUsers }) {
-  const { data, selectedYear, currentUser, addKpi, updateKpi, removeKpi, saveEvaluation, getEvaluation } = useApp()
+  const { data, selectedYear, currentUser, addKpi, updateKpi, removeKpi } = useApp()
   const [form, setForm] = useState(BLANK_FORM)
   const [editingId, setEditingId] = useState(null)
   const [errors, setErrors] = useState({})
   const [filterStaff, setFilterStaff] = useState('all')
   const [filterQuarter, setFilterQuarter] = useState('Q1')
   const [confirmDelete, setConfirmDelete] = useState(null)
-  const [scoringKpiId, setScoringKpiId] = useState(null)
-  const [supScores, setSupScores] = useState({})
   const [assignOpen, setAssignOpen] = useState(false)
   const [drafts, setDrafts] = useState([])
   const [sending, setSending] = useState(false)
@@ -234,34 +231,6 @@ function SupervisorView({ allUsers }) {
     setSending(false)
   }
 
-  // Scoring: Supervisor scores accepted KPIs at end of quarter
-  const openScoring = (staffId, quarter) => {
-    const accepted = myKpis.filter(k => k.staffId === staffId && k.quarter === quarter && k.status === 'Accepted')
-    const init = {}
-    accepted.forEach(k => {
-      const existing = getEvaluation(selectedYear, quarter, staffId, currentUser.id, 'part3_sup')
-      const saved = existing?.kpiScores?.[k.id] ?? 0
-      init[k.id] = saved
-    })
-    setSupScores(init)
-    setScoringKpiId(`${staffId}__${quarter}`)
-  }
-
-  const saveSupScoring = (staffId, quarter) => {
-    const accepted = myKpis.filter(k => k.staffId === staffId && k.quarter === quarter && k.status === 'Accepted')
-    const total = accepted.reduce((s, k) => s + (supScores[k.id] ?? 0), 0)
-    saveEvaluation({
-      year: selectedYear, quarter, staffId,
-      evaluatorId: currentUser.id,
-      evaluatorRole: 'Supervisor',
-      part: 'part3_sup',
-      kpiScores: supScores,
-      rawTotal: total,
-      scaledScore: total,
-    })
-    setScoringKpiId(null)
-  }
-
   const filteredByQuarter = myKpis.filter(k => k.quarter === filterQuarter && (filterStaff === 'all' || k.staffId === filterStaff))
   const assignedInModal = myKpis
     .filter((k) => k.staffId === form.staffId && k.quarter === form.quarter)
@@ -306,7 +275,7 @@ function SupervisorView({ allUsers }) {
             </button>
           ))}
         </div>
-        <span className="ml-auto text-xs text-gray-400">รายการ KPI แสดงในหน้าต่าง “มอบหมาย KPI”</span>
+        <span className="ml-auto text-xs text-gray-400">รายการ KPI แสดงในหน้าต่าง "มอบหมาย KPI" · ให้คะแนนใน Evaluation Forms &gt; Part 3</span>
       </div>
 
       {/* KPI list grouped by staff */}
@@ -317,8 +286,6 @@ function SupervisorView({ allUsers }) {
         const rejected = staffKpis.filter(k => k.status === 'Rejected')
         const kpiCount = staffKpis.length
         const maxPerItem = kpiMaxPerItem(kpiCount)
-        const supEval = getEvaluation(selectedYear, filterQuarter, staff.id, currentUser.id, 'part3_sup')
-        const isScoringOpen = scoringKpiId === `${staff.id}__${filterQuarter}`
 
         return (
           <div key={staff.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -328,54 +295,17 @@ function SupervisorView({ allUsers }) {
                 <div>
                   <p className="text-sm font-semibold text-gray-900">{staff.name}</p>
                   <p className="text-xs text-gray-400">
-                    {staffKpis.length}/{KPI_MAX_PER_QUARTER} KPI · {accepted.length} ยอมรับ · {pending.length} รอยืนยัน · {rejected.length} ปฏิเสธ · {maxPerItem} คะแนน/ข้อ
+                    {staffKpis.length}/{KPI_MAX_PER_QUARTER} KPI · {accepted.length} ยอมรับ · {pending.length} รอยืนยัน · {rejected.length} ปฏิเสธ
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => openAssign(staff.id)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-                >
-                  <PlusCircle size={12} /> มอบหมาย KPI
-                </button>
-                {accepted.length > 0 && (
-                  <button onClick={() => isScoringOpen ? setScoringKpiId(null) : openScoring(staff.id, filterQuarter)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isScoringOpen ? 'bg-indigo-100 text-indigo-700' : supEval ? 'bg-green-100 text-green-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
-                    <Star size={12} />
-                    {supEval ? `ให้คะแนนแล้ว (${supEval.rawTotal}/${accepted.length * maxPerItem})` : 'ให้คะแนน Supervisor'}
-                    {isScoringOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  </button>
-                )}
-              </div>
+              <button
+                onClick={() => openAssign(staff.id)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+              >
+                <PlusCircle size={12} /> มอบหมาย KPI
+              </button>
             </div>
-
-            {/* Supervisor scoring panel */}
-            {isScoringOpen && accepted.length > 0 && (
-              <div className="px-5 pb-5 pt-3 border-t border-indigo-100 bg-indigo-50 space-y-4">
-                <p className="text-xs font-semibold text-indigo-700 flex items-center gap-1.5"><Star size={12} /> ให้คะแนน KPI — {staff.name} · {filterQuarter} (Supervisor 60%) · ข้อละ {maxPerItem} คะแนน</p>
-                {accepted.map((kpi) => (
-                  <div key={kpi.id} className="bg-white rounded-lg border border-indigo-100 p-3">
-                    <p className="text-xs font-semibold text-gray-800 mb-2">{kpi.title}</p>
-                    <ScoreSlider
-                      value={supScores[kpi.id] ?? 0}
-                      onChange={(v) => setSupScores((p) => ({ ...p, [kpi.id]: v }))}
-                      disabled={false}
-                      maxScore={maxPerItem}
-                    />
-                  </div>
-                ))}
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-indigo-600 font-semibold">
-                    รวม Supervisor: {accepted.reduce((s, k) => s + (supScores[k.id] ?? 0), 0)} / {accepted.length * maxPerItem}
-                  </p>
-                  <button onClick={() => saveSupScoring(staff.id, filterQuarter)}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700">
-                    <Save size={12} /> บันทึกคะแนน Supervisor
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         )
       })}
@@ -652,9 +582,6 @@ function StaffView({ allUsers }) {
     return pendingQ || activeQuarter || 'Q1'
   })
 
-  const [staffScores, setStaffScores] = useState({})
-  const [scoringSaved, setScoringSaved] = useState({})
-
   const myKpis = data.kpis.filter((k) => k.staffId === currentUser.id && k.year === selectedYear)
   const quarterKpis = myKpis.filter((k) => k.quarter === filterQuarter)
   const accepted = quarterKpis.filter((k) => k.status === 'Accepted')
@@ -671,34 +598,6 @@ function StaffView({ allUsers }) {
     respondKpi(rejectModal, 'Rejected', rejectReason.trim())
     setRejectModal(null); setRejectReason(''); setRejectError('')
   }
-
-  const initScores = (quarter) => {
-    const kpis = myKpis.filter(k => k.quarter === quarter && k.status === 'Accepted')
-    const existing = getEvaluation(selectedYear, quarter, currentUser.id, currentUser.id, 'part3_staff')
-    const init = {}
-    kpis.forEach(k => { init[k.id] = existing?.kpiScores?.[k.id] ?? 0 })
-    setStaffScores(init)
-    setScoringSaved(prev => ({ ...prev, [quarter]: !!existing }))
-  }
-
-  const handleQuarterChange = (q) => { setFilterQuarter(q); initScores(q) }
-
-  const saveStaffScoring = () => {
-    const total = accepted.reduce((s, k) => s + (staffScores[k.id] ?? 0), 0)
-    saveEvaluation({
-      year: selectedYear, quarter: filterQuarter, staffId: currentUser.id,
-      evaluatorId: currentUser.id,
-      evaluatorRole: 'Staff',
-      part: 'part3_staff',
-      kpiScores: staffScores,
-      rawTotal: total,
-      scaledScore: total,
-    })
-    setScoringSaved(prev => ({ ...prev, [filterQuarter]: true }))
-  }
-
-  const staffEval = getEvaluation(selectedYear, filterQuarter, currentUser.id, currentUser.id, 'part3_staff')
-  const isSavedThisQ = scoringSaved[filterQuarter] || !!staffEval
 
   if (myKpis.length === 0) {
     return (
@@ -726,7 +625,7 @@ function StaffView({ allUsers }) {
           const qKpis = myKpis.filter(k => k.quarter === q)
           const qPending = qKpis.filter(k => k.status === 'Pending').length
           return (
-            <button key={q} onClick={() => handleQuarterChange(q)}
+            <button key={q} onClick={() => setFilterQuarter(q)}
               className={`flex-1 py-2 rounded-lg border text-xs font-semibold transition-all relative ${filterQuarter === q ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400'}`}>
               {q}
               {qPending > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-yellow-400 text-white text-[9px] font-bold rounded-full flex items-center justify-center">{qPending}</span>}
@@ -786,43 +685,25 @@ function StaffView({ allUsers }) {
         </div>
       )}
 
-      {/* Accepted — self-scoring */}
+      {/* Accepted — view only (scoring moved to Evaluation Forms) */}
       {accepted.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-3 bg-green-50 border-b border-green-100">
-            <p className="text-xs font-semibold text-green-800">KPI ที่ยอมรับ ({accepted.length} รายการ) — ประเมินตนเอง (Staff 40%) · ข้อละ {maxPerItem} คะแนน</p>
-            {isSavedThisQ && (
-              <span className="text-xs text-green-700 font-semibold flex items-center gap-1"><CheckCircle2 size={12} /> บันทึกแล้ว</span>
-            )}
+            <p className="text-xs font-semibold text-green-800">KPI ที่ยอมรับแล้ว ({accepted.length} รายการ)</p>
+            <span className="text-xs text-blue-600">ไปที่ Evaluation Forms &gt; Part 3 เพื่อประเมินตนเอง</span>
           </div>
           <div className="p-5 space-y-4">
             {accepted.map((kpi, idx) => (
               <div key={kpi.id} className="border border-gray-100 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-2">
                   <span className="w-6 h-6 rounded-full bg-green-100 text-green-700 text-xs font-bold flex items-center justify-center shrink-0">{idx + 1}</span>
                   <div>
                     <p className="text-sm font-semibold text-gray-900">{kpi.title}</p>
                     <p className="text-xs text-gray-400">วิธีประเมิน: {kpi.assessmentMethod}</p>
                   </div>
                 </div>
-                <ScoreSlider
-                  value={staffScores[kpi.id] ?? (staffEval?.kpiScores?.[kpi.id] ?? 0)}
-                  onChange={(v) => { setStaffScores(p => ({ ...p, [kpi.id]: v })); setScoringSaved(p => ({ ...p, [filterQuarter]: false })) }}
-                  disabled={false}
-                  label="คะแนนประเมินตนเอง"
-                  maxScore={maxPerItem}
-                />
               </div>
             ))}
-            <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-              <div className="text-xs text-gray-500">
-                รวม Staff: <strong className="text-indigo-600">{accepted.reduce((s, k) => s + (staffScores[k.id] ?? staffEval?.kpiScores?.[k.id] ?? 0), 0)}</strong> / {accepted.length * maxPerItem}
-              </div>
-              <button onClick={saveStaffScoring}
-                className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white text-xs font-semibold rounded-lg hover:bg-green-700">
-                <Save size={12} /> บันทึกคะแนน Staff
-              </button>
-            </div>
           </div>
         </div>
       )}

@@ -4,11 +4,12 @@ import {
   signInWithPopup,
   signOut,
   updateProfile,
+  deleteUser as deleteFirebaseUser,
 } from 'firebase/auth'
 import {
   doc, getDoc, collection, query, where,
   getDocs, updateDoc, serverTimestamp, runTransaction,
-  addDoc, onSnapshot,
+  addDoc, onSnapshot, deleteDoc,
 } from 'firebase/firestore'
 import { auth, db, googleProvider, hasConfig } from '../firebase'
 
@@ -153,9 +154,23 @@ export function subscribeAllUsers(callback) {
   )
 }
 
-// ── Subscribe to pending count (realtime badge) ────────────────────────────────
+// ── Admin: delete user ─────────────────────────────────────────────────────────
+export async function deleteUser(uid) {
+  if (!db) return
+  // Delete user document from Firestore
+  await deleteDoc(userDocRef(uid))
+  // Note: Firebase Auth user deletion requires Admin SDK or client-side deleteUser
+  // For now, we delete the profile from Firestore
+  logActivity(uid, 'DELETE_USER', {})
+}
+
+// ── Subscribe to pending user count (realtime) ──────────────────────────────────
 export function subscribePendingCount(callback) {
   if (!hasConfig || !db) { callback(0); return () => {} }
   const q = query(usersCol(), where('status', '==', 'pending'))
-  return onSnapshot(q, (snap) => callback(snap.size), () => callback(0))
+  return onSnapshot(
+    q,
+    (snap) => callback(snap.docs.length),
+    () => callback(0)
+  )
 }

@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { subscribeAllUsers, updateUserProfile, ALL_ROLES } from '../services/authService'
+import { subscribeAllUsers, updateUserProfile, deleteUser, ALL_ROLES } from '../services/authService'
 import { useAuth } from '../context/AuthContext'
 import {
   Users, CheckCircle2, XCircle, Clock, Edit3, Save, X, ChevronDown,
   User, Loader, AlertCircle, Search, Filter, Mail, Briefcase,
-  KeyRound, RefreshCw, BadgeCheck,
+  KeyRound, RefreshCw, BadgeCheck, Trash2,
 } from 'lucide-react'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -134,8 +134,10 @@ function RoleMultiSelect({ selected = [], onChange }) {
 }
 
 // ── User Row ───────────────────────────────────────────────────────────────────
-function UserRow({ user, isSelf }) {
+function UserRow({ user, isSelf, isMasterAdmin }) {
   const [editing, setEditing] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [form, setForm] = useState({
     firstName: user.firstName || '',
     lastName:  user.lastName || '',
@@ -172,6 +174,13 @@ function UserRow({ user, isSelf }) {
     setSaving(true)
     await updateUserProfile(user.uid, { status: 'rejected' }).catch(() => {})
     setSaving(false)
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    await deleteUser(user.uid).catch(() => {})
+    setDeleting(false)
+    setShowDeleteConfirm(false)
   }
 
   const handleSave = async () => {
@@ -253,6 +262,18 @@ function UserRow({ user, isSelf }) {
               </button>
             </>
           )}
+          
+          {/* Delete button for MasterAdmin (not for self) */}
+          {isMasterAdmin && !isSelf && (
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              title="ลบผู้ใช้"
+              className="p-2 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+          
           <button
             onClick={() => setEditing(v => !v)}
             title={editing ? 'ยกเลิก' : 'แก้ไข'}
@@ -265,6 +286,44 @@ function UserRow({ user, isSelf }) {
           </button>
         </div>
       </div>
+
+      {/* ── Delete Confirmation Modal ── */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <Trash2 size={20} className="text-red-600" />
+              </div>
+              <h3 className="text-base font-bold text-gray-900">ยืนยันการลบผู้ใช้</h3>
+            </div>
+            
+            <p className="text-sm text-gray-600 mb-2">
+              คุณต้องการลบผู้ใช้ <strong className="text-gray-900">{displayName}</strong> ออกจากระบบ?
+            </p>
+            <p className="text-xs text-red-600 mb-4">
+              การกระทำนี้ไม่สามารถย้อนกลับได้ ข้อมูลผู้ใช้จะถูกลบออกจากระบบถาวร
+            </p>
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+              >
+                {deleting ? <Loader size={14} className="animate-spin mx-auto" /> : 'ลบผู้ใช้'}
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="px-4 py-2 border border-gray-200 text-gray-600 text-sm rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Inline Edit Form ── */}
       {editing && (
@@ -496,6 +555,7 @@ export default function UserManagement() {
               key={user.uid}
               user={user}
               isSelf={user.uid === userProfile?.uid}
+              isMasterAdmin={userProfile?.roles?.includes('MasterAdmin')}
             />
           ))}
           <p className="text-xs text-gray-400 text-center pt-1">

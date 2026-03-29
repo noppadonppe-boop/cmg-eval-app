@@ -333,7 +333,8 @@ export function AppProvider({ children }) {
           e.quarter === evalRecord.quarter &&
           e.staffId === evalRecord.staffId &&
           e.evaluatorId === evalRecord.evaluatorId &&
-          e.part === evalRecord.part
+          e.part === evalRecord.part &&
+          (evalRecord.evaluatorRole ? e.evaluatorRole === evalRecord.evaluatorRole : true)
       )
       if (idx >= 0) {
         const updated = [...evals]
@@ -350,14 +351,15 @@ export function AppProvider({ children }) {
     })
   }
 
-  const getEvaluation = (year, quarter, staffId, evaluatorId, part) =>
+  const getEvaluation = (year, quarter, staffId, evaluatorId, part, evaluatorRole = null) =>
     (data?.quarterlyEvaluations ?? []).find(
       (e) =>
         e.year === year &&
         e.quarter === quarter &&
         e.staffId === staffId &&
         e.evaluatorId === evaluatorId &&
-        e.part === part
+        e.part === part &&
+        (evaluatorRole ? e.evaluatorRole === evaluatorRole : true)
     ) || null
 
   const getEvaluationForPart = (year, quarter, staffId, part) =>

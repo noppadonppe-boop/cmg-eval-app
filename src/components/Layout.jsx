@@ -47,9 +47,12 @@ function ProfileAvatar({ user, size = 'md' }) {
 
 export default function Layout() {
   const { userProfile, logout, firebaseUser, hasConfig } = useAuth()
-  const { data, currentUser, selectedYear, setSelectedYear } = useApp()
+  const { data, currentUser, selectedYear: rawSelectedYear, setSelectedYear } = useApp()
   const { can, roles } = useRBAC()
   const location = useLocation()
+
+  // Fix undefined selectedYear by providing fallback
+  const selectedYear = rawSelectedYear || data?.evaluationYears?.[0] || new Date().getFullYear()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -58,6 +61,7 @@ export default function Layout() {
   const [profileDropOpen, setProfileDropOpen] = useState(false)
   const [yearDropOpen, setYearDropOpen] = useState(false)
   const [editProfileOpen, setEditProfileOpen] = useState(false)
+  const [showLoginNotification, setShowLoginNotification] = useState(false)
   const profileDropRef = useRef(null)
   const yearDropRef = useRef(null)
 
@@ -76,9 +80,91 @@ export default function Layout() {
     '/': true,
   }
 
+  // Calculate pending evaluation count
+  const quarter = data?.activeQuarter || 'Q1'
   const kpiPendingCount = data?.kpis?.filter(
     k => k.staffId === currentUser?.id && k.year === selectedYear && k.status === 'Pending'
   ).length || 0
+  
+  // Helper: Check if staff is ready for evaluation (setup complete)
+  const isStaffReady = (staffId) => {
+    // TEMPORARY: Relaxed requirements for testing
+    // Return true if staff has basic data (discipline + KPIs), ignore other requirements for now
+    
+    const quarterKpis = (data?.kpis || []).filter(
+      k => k.staffId === staffId && k.year === selectedYear && k.quarter === quarter
+    )
+    
+    // Check discipline data exists (Part 2 must be set by HR)
+    const disciplineSet = (data?.quarterlyEvaluations || []).some(
+      e => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === 'part2'
+    )
+    
+    // Check KPI - must have 3 accepted KPIs
+    const kpiSetAndAcceptedAll3 = quarterKpis.length === 3 && quarterKpis.every(k => k.status === 'Accepted')
+    
+    // RELAXED: Only require discipline OR KPIs (not both)
+    const isReady = disciplineSet || kpiSetAndAcceptedAll3
+    
+    return isReady
+  }
+  
+  const evalPendingCount = (() => {
+    let count = 0
+    const yearConfigs = data?.staffConfigs?.filter(c => c.year === selectedYear) || []
+    
+    // Helper to check if evaluation exists
+    const hasEval = (staffId, part, evaluatorId = null) => {
+      if (evaluatorId) {
+        return data?.quarterlyEvaluations?.some(
+          e => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === part && e.evaluatorId === evaluatorId
+        )
+      }
+      return data?.quarterlyEvaluations?.some(
+        e => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === part
+      )
+    }
+    
+    // Self evaluation check - count as 1 card if any part incomplete (only if ready)
+    if (isAssignedStaff && isStaffReady(currentUser?.id)) {
+      const hasPart1 = hasEval(currentUser?.id, 'part1')
+      const hasPart2 = hasEval(currentUser?.id, 'part2')
+      const hasPart3 = hasEval(currentUser?.id, 'part3_staff')
+      const hasPart4 = hasEval(currentUser?.id, 'part4')
+      // Count this card if any part is incomplete (status like 0/4, 1/4, 2/4, 3/4)
+      if (!hasPart1 || !hasPart2 || !hasPart3 || !hasPart4) count++
+    }
+    
+    // Staff I need to evaluate as Supervisor - count each card if any part incomplete (only if ready)
+    if (isSupervisor) {
+      const myStaffIds = yearConfigs
+        .filter(c => c.supervisorId === currentUser?.id)
+        .map(c => c.staffId)
+      myStaffIds.forEach(staffId => {
+        if (!isStaffReady(staffId)) return
+        const hasPart1 = hasEval(staffId, 'part1', currentUser?.id)
+        const hasPart2 = hasEval(staffId, 'part2', currentUser?.id)
+        const hasPart3 = hasEval(staffId, 'part3_sup', currentUser?.id)
+        const hasPart4 = hasEval(staffId, 'part4', currentUser?.id)
+        // Count this card if any part is incomplete
+        if (!hasPart1 || !hasPart2 || !hasPart3 || !hasPart4) count++
+      })
+    }
+    
+    // Staff I need to evaluate as Stakeholder - count each card if any part incomplete (Part 1 & 4 only, only if ready)
+    const myStakeholderStaffIds = yearConfigs
+      .filter(c => (c.stakeholderIds || []).includes(currentUser?.id))
+      .map(c => c.staffId)
+    myStakeholderStaffIds.forEach(staffId => {
+      if (!isStaffReady(staffId)) return
+      const hasPart1 = hasEval(staffId, 'part1', currentUser?.id)
+      const hasPart4 = hasEval(staffId, 'part4', currentUser?.id)
+      // Count this card if any part is incomplete
+      if (!hasPart1 || !hasPart4) count++
+    })
+    
+    return count
+  })()
 
   // Subscribe to pending count (MasterAdmin only)
   useEffect(() => {
@@ -86,7 +172,24 @@ export default function Layout() {
     return subscribePendingCount(setPendingCount)
   }, [isMasterAdmin, hasConfig])
 
-  // Close dropdowns on outside click
+  // Show login notification if there are pending evaluations
+  useEffect(() => {
+    if (evalPendingCount > 0) {
+      const timer = setTimeout(() => setShowLoginNotification(true), 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [evalPendingCount])
+
+  // Show notification on every initial app load (page refresh)
+  useEffect(() => {
+    // Small delay to ensure evalPendingCount is calculated
+    const timer = setTimeout(() => {
+      if (evalPendingCount > 0) {
+        setShowLoginNotification(true)
+      }
+    }, 1500)
+    return () => clearTimeout(timer)
+  }, [])
   useEffect(() => {
     const handler = (e) => {
       if (profileDropRef.current && !profileDropRef.current.contains(e.target)) setProfileDropOpen(false)
@@ -107,6 +210,71 @@ export default function Layout() {
     : currentUser?.name || 'User'
 
   const displayRoles = userProfile?.roles || (currentUser?.roles ? currentUser.roles : [currentUser?.role].filter(Boolean))
+
+  // ── Login Notification Modal ─────────────────────────────────────────
+  function LoginNotificationModal() {
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] px-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
+                <Bell size={16} className="text-red-600" />
+              </div>
+              <h3 className="text-base font-bold text-gray-900">แจ้งเตือนการประเมิน</h3>
+            </div>
+            <button onClick={() => setShowLoginNotification(false)} className="text-gray-400 hover:text-gray-600">
+              <X size={18} />
+            </button>
+          </div>
+          
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-4">
+            <p className="text-sm text-red-700">
+              คุณมี <strong className="text-lg">{evalPendingCount}</strong> รายการที่รอการประเมิน
+            </p>
+            <p className="text-xs text-red-600 mt-1">
+              กรุณาไปที่เมนู Evaluation Forms เพื่อดำเนินการประเมินให้ครบทั้ง 4 Parts
+            </p>
+          </div>
+
+          <div className="space-y-2 mb-4">
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-bold">1</span>
+              <span>Part 1 — Competency (30 pts)</span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-5 h-5 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-[10px] font-bold">2</span>
+              <span>Part 2 — Discipline (20 pts) — รับทราบ</span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-bold">3</span>
+              <span>Part 3 — KPI (30 pts)</span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-5 h-5 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-[10px] font-bold">4</span>
+              <span>Part 4 — Job Description (20 pts)</span>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Link
+              to="/eval"
+              onClick={() => setShowLoginNotification(false)}
+              className="flex-1 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 text-center"
+            >
+              ไปที่ Evaluation Forms
+            </Link>
+            <button
+              onClick={() => setShowLoginNotification(false)}
+              className="px-4 py-2 border border-gray-200 text-gray-600 text-sm rounded-lg hover:bg-gray-50"
+            >
+              ปิด
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   // ── Edit Profile Modal ────────────────────────────────────────────────────
   function EditProfileModal() {
@@ -252,6 +420,21 @@ export default function Layout() {
                   <Icon size={18} className={`shrink-0 ${isActive && !showUserMgmt ? 'text-white' : 'text-gray-400'}`} />
                   {!collapsed && <span className="flex-1 whitespace-nowrap overflow-hidden">{link.label}</span>}
                   
+                  {/* Eval Pending Badge (Expanded) */}
+                  {!collapsed && link.to === '/eval' && evalPendingCount > 0 && (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.2rem] text-center ${
+                      isActive && !showUserMgmt ? 'bg-white text-indigo-600' : 'bg-red-500 text-white'
+                    }`}>
+                      {evalPendingCount > 99 ? '99+' : evalPendingCount}
+                    </span>
+                  )}
+                  {/* Eval Pending Badge (Collapsed) */}
+                  {collapsed && link.to === '/eval' && evalPendingCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-white">
+                      {evalPendingCount > 9 ? '9+' : evalPendingCount}
+                    </span>
+                  )}
+
                   {/* KPI Pending Badge (Expanded) */}
                   {!collapsed && link.to === '/kpi' && kpiPendingCount > 0 && (
                     <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.2rem] text-center ${
@@ -387,6 +570,13 @@ export default function Layout() {
               >
                 <Icon size={18} className={isActive && !showUserMgmt ? 'text-white' : 'text-gray-400'} />
                 <span className="flex-1">{link.label}</span>
+                {link.to === '/eval' && evalPendingCount > 0 && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.2rem] text-center ${
+                    isActive && !showUserMgmt ? 'bg-white text-indigo-600' : 'bg-red-500 text-white'
+                  }`}>
+                    {evalPendingCount > 99 ? '99+' : evalPendingCount}
+                  </span>
+                )}
                 {link.to === '/kpi' && kpiPendingCount > 0 && (
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.2rem] text-center ${
                     isActive && !showUserMgmt ? 'bg-white text-indigo-600' : 'bg-red-500 text-white'
@@ -556,6 +746,9 @@ export default function Layout() {
 
       {/* Edit Profile Modal */}
       {editProfileOpen && <EditProfileModal />}
+      
+      {/* Login Notification Modal */}
+      {showLoginNotification && <LoginNotificationModal />}
     </div>
   )
 }

@@ -56,7 +56,7 @@ function ScoreSlider({ value, onChange, disabled, label, maxScore }) {
 
 // ─── Staff self-scoring panel ─────────────────────────────────────────────────
 
-function StaffScoringPanel({ staffId, quarter, year }) {
+function StaffScoringPanel({ staffId, quarter, year, onComplete }) {
   const { data, saveEvaluation, getEvaluation, respondKpi } = useApp()
 
   const myKpis = data.kpis.filter(
@@ -101,6 +101,8 @@ function StaffScoringPanel({ staffId, quarter, year }) {
       scaledScore: total,
     })
     setSaved(true)
+    // Auto-navigate to Part 4 after save
+    if (onComplete) onComplete()
   }
 
   if (myKpis.length === 0) {
@@ -272,7 +274,7 @@ function StaffScoringPanel({ staffId, quarter, year }) {
 
 // ─── Supervisor scoring panel ─────────────────────────────────────────────────
 
-function SupervisorScoringPanel({ staffId, quarter, year }) {
+function SupervisorScoringPanel({ staffId, quarter, year, onComplete }) {
   const { data, currentUser, saveEvaluation, getEvaluation } = useApp()
 
   const staffKpis = data.kpis.filter(
@@ -305,6 +307,8 @@ function SupervisorScoringPanel({ staffId, quarter, year }) {
       scaledScore: total,
     })
     setSaved(true)
+    // Auto-navigate to Part 4 after save
+    if (onComplete) onComplete()
   }
 
   const staffTotal = staffEval?.rawTotal ?? null
@@ -450,10 +454,10 @@ function SupervisorScoringPanel({ staffId, quarter, year }) {
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
-export default function Part3KpiEval({ staffId, quarter, year, isSupervisor }) {
+export default function Part3KpiEval({ staffId, quarter, year, isSupervisor, onComplete }) {
   // isSupervisor = true when the current user is assigned as supervisorId for this staff in staffConfig
   if (isSupervisor) {
-    return <SupervisorScoringPanel staffId={staffId} quarter={quarter} year={year} />
+    return <SupervisorScoringPanel staffId={staffId} quarter={quarter} year={year} onComplete={onComplete} />
   }
-  return <StaffScoringPanel staffId={staffId} quarter={quarter} year={year} />
+  return <StaffScoringPanel staffId={staffId} quarter={quarter} year={year} onComplete={onComplete} />
 }

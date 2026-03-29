@@ -12,9 +12,14 @@ const EVAL_ROLE_BADGE = {
   MD:          'bg-red-100 text-red-800 ring-red-200',
 }
 
-export default function Part4JobDescription({ staffId, quarter, year, evaluatorRole = 'Staff' }) {
-  const { currentUser, saveEvaluation, getEvaluation, getUserById } = useApp()
-  const existing = getEvaluation(year, quarter, staffId, currentUser.id, 'part4')
+export default function Part4JobDescription({ staffId, quarter, year, evaluatorRole = 'Staff', evaluatorContext, onComplete }) {
+  const { currentUser, saveEvaluation, getEvaluation, getUserById, data } = useApp()
+  
+  // Load evaluation data filtered by evaluatorRole
+  const allEvaluations = data.quarterlyEvaluations.filter(
+    (e) => e.staffId === staffId && e.year === year && e.quarter === quarter && e.part === 'part4' && e.evaluatorId === currentUser.id
+  )
+  const existing = allEvaluations.find(e => e.evaluatorRole === evaluatorRole)
 
   const [score, setScore] = useState(existing?.score ?? 10)
   const [comment, setComment] = useState(existing?.comment ?? '')
@@ -41,6 +46,8 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
       scaledScore: score,
     })
     setSaved(true)
+    // Auto-navigate back to EvalPage after save
+    if (onComplete) onComplete()
   }
 
   return (
