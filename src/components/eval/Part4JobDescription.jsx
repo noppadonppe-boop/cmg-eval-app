@@ -23,6 +23,7 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
 
   const staff = getUserById(staffId)
   const needsComment = COMMENT_REQUIRED(score)
+  const isComplete = !needsComment || comment.trim() !== ''
 
   const handleSave = () => {
     if (needsComment && !comment.trim()) {
@@ -89,9 +90,19 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
               <span className="text-sm font-medium text-gray-400 ml-1">/ 20</span>
             </p>
           </div>
-          <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white text-sm font-semibold rounded-lg hover:bg-purple-700">
-            <Save size={14} /> บันทึก
-          </button>
+          {!saved && (
+            <button
+              onClick={handleSave}
+              disabled={!isComplete}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                isComplete 
+                  ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              <Save size={14} /> บันทึก
+            </button>
+          )}
         </div>
       </div>
 
@@ -128,7 +139,7 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
         comment={comment}
         onScoreChange={(v) => { setSaved(false); setScore(v); setError('') }}
         onCommentChange={(v) => { setSaved(false); setComment(v); setError('') }}
-        disabled={false}
+        disabled={saved}
       />
 
       {/* Scoring guide */}

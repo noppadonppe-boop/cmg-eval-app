@@ -1,9 +1,14 @@
 /**
  * Part 1 weighted formula:
  * [ Staff_raw×0.20 + Supervisor_raw×0.50 + Stakeholder_raw×0.30 ] / PART1_MAX_RAW × 30
- * PART1_MAX_RAW = 14 items × 20 = 280
+ * PART1_MAX_RAW = numberOfItems × 10 (dynamic from competencyConfig)
  */
-const PART1_MAX_RAW = 14 * 20
+function getPart1MaxRaw(data) {
+  const cfg = data?.competencyConfig
+  const count = Array.isArray(cfg?.items) && cfg.items.length > 0 ? cfg.items.length : 14
+  const scaleMax = cfg?.scaleMax ?? 10
+  return count * scaleMax
+}
 const PART1_WEIGHTS = { Staff: 0.20, Supervisor: 0.50, Stakeholder: 0.30 }
 
 /**
@@ -36,7 +41,7 @@ export function getQuarterScores(data, staffId, year, quarter) {
       }
     })
     if (totalWeight > 0) {
-      part1 = Math.round((weightedSum / PART1_MAX_RAW) * 30 * 100) / 100
+      part1 = Math.round((weightedSum / getPart1MaxRaw(data)) * 30 * 100) / 100
     }
   }
 

@@ -76,6 +76,10 @@ export default function Layout() {
     '/': true,
   }
 
+  const kpiPendingCount = data?.kpis?.filter(
+    k => k.staffId === currentUser?.id && k.year === selectedYear && k.status === 'Pending'
+  ).length || 0
+
   // Subscribe to pending count (MasterAdmin only)
   useEffect(() => {
     if (!isMasterAdmin || !hasConfig) return
@@ -246,7 +250,23 @@ export default function Layout() {
                   }`}
                 >
                   <Icon size={18} className={`shrink-0 ${isActive && !showUserMgmt ? 'text-white' : 'text-gray-400'}`} />
-                  {!collapsed && <span className="whitespace-nowrap overflow-hidden">{link.label}</span>}
+                  {!collapsed && <span className="flex-1 whitespace-nowrap overflow-hidden">{link.label}</span>}
+                  
+                  {/* KPI Pending Badge (Expanded) */}
+                  {!collapsed && link.to === '/kpi' && kpiPendingCount > 0 && (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.2rem] text-center ${
+                      isActive && !showUserMgmt ? 'bg-white text-indigo-600' : 'bg-red-500 text-white'
+                    }`}>
+                      {kpiPendingCount > 99 ? '99+' : kpiPendingCount}
+                    </span>
+                  )}
+                  {/* KPI Pending Badge (Collapsed) */}
+                  {collapsed && link.to === '/kpi' && kpiPendingCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-white">
+                      {kpiPendingCount > 9 ? '9+' : kpiPendingCount}
+                    </span>
+                  )}
+
                   {/* Tooltip on collapsed */}
                   {collapsed && (
                     <span className="absolute left-full ml-2 px-2.5 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-medium whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 shadow-lg">
@@ -366,7 +386,14 @@ export default function Layout() {
                 }`}
               >
                 <Icon size={18} className={isActive && !showUserMgmt ? 'text-white' : 'text-gray-400'} />
-                {link.label}
+                <span className="flex-1">{link.label}</span>
+                {link.to === '/kpi' && kpiPendingCount > 0 && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.2rem] text-center ${
+                    isActive && !showUserMgmt ? 'bg-white text-indigo-600' : 'bg-red-500 text-white'
+                  }`}>
+                    {kpiPendingCount > 99 ? '99+' : kpiPendingCount}
+                  </span>
+                )}
               </Link>
             )
           })}

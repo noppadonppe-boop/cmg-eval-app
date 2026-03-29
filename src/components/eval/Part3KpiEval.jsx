@@ -203,7 +203,7 @@ function StaffScoringPanel({ staffId, quarter, year }) {
                 <ScoreSlider
                   value={scores[kpi.id] ?? 0}
                   onChange={(v) => { setScores((p) => ({ ...p, [kpi.id]: v })); setSaved(false) }}
-                  disabled={false}
+                  disabled={saved}
                   label="คะแนนประเมินตนเอง"
                   maxScore={maxPerItem}
                 />
@@ -214,10 +214,12 @@ function StaffScoringPanel({ staffId, quarter, year }) {
                 รวม Staff: <strong className="text-blue-600">{accepted.reduce((s, k) => s + (scores[k.id] ?? 0), 0)}</strong> / {accepted.length * maxPerItem}
                 <span className="text-gray-400 ml-2">(น้ำหนัก 40% → {Math.round(accepted.reduce((s, k) => s + (scores[k.id] ?? 0), 0) * 0.40 * 100) / 100} pts)</span>
               </p>
-              <button onClick={handleSave}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700">
-                <Save size={12} /> บันทึกคะแนน Staff
-              </button>
+              {!saved && (
+                <button onClick={handleSave}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700">
+                  <Save size={12} /> บันทึกคะแนน Staff
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -389,7 +391,7 @@ function SupervisorScoringPanel({ staffId, quarter, year }) {
                 <ScoreSlider
                   value={scores[kpi.id] ?? 0}
                   onChange={(v) => { setScores((p) => ({ ...p, [kpi.id]: v })); setSaved(false) }}
-                  disabled={false}
+                  disabled={saved}
                   label="คะแนน Supervisor"
                   maxScore={maxPerItem}
                 />
@@ -401,10 +403,12 @@ function SupervisorScoringPanel({ staffId, quarter, year }) {
                 รวม Supervisor: <strong className="text-indigo-600">{accepted.reduce((s, k) => s + (scores[k.id] ?? 0), 0)}</strong> / {maxPossible}
                 <span className="text-gray-400 ml-2">(น้ำหนัก 60% → {Math.round(accepted.reduce((s, k) => s + (scores[k.id] ?? 0), 0) * 0.60 * 100) / 100} pts)</span>
               </p>
-              <button onClick={handleSave}
-                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700">
-                <Save size={12} /> บันทึกคะแนน Supervisor
-              </button>
+              {!saved && (
+                <button onClick={handleSave}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700">
+                  <Save size={12} /> บันทึกคะแนน Supervisor
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useApp } from '../../context/AppContext'
 import { ROLE_AVATAR_BG, ROLE_BADGE_CLASSES } from '../../hooks/useRBAC'
 import { CheckCircle2, AlertCircle, Save, ChevronDown, ChevronUp, Info } from 'lucide-react'
+import { DEFAULT_COMPETENCIES } from '../admin/CompetencyTab'
 
 // Badge classes for evaluatorRole strings (functional roles, not user roles)
 const EVAL_ROLE_BADGE = {
@@ -12,106 +13,52 @@ const EVAL_ROLE_BADGE = {
   MD:          'bg-red-100 text-red-800 ring-red-200',
 }
 
-export const COMPETENCY_LIST = [
-  {
-    key: 'c01',
-    title: 'ความรู้ความสามารถ',
-    desc: 'ความเข้าใจในงาน สามารถปฏิบัติงานตามหน้าที่ที่ได้รับมอบหมายได้อย่างถูกต้อง มีประสิทธิภาพ',
-  },
-  {
-    key: 'c02',
-    title: 'ความคิดสร้างสรรค์',
-    desc: 'ความสามารถในการคิดแนวทางใหม่ๆ ปรับปรุงวิธีการทำงาน หรือพัฒนากระบวนการให้มีประสิทธิภาพมากขึ้น โดยสามารถใช้ความรู้และประสบการณ์เพื่อแก้ไขปัญหาและสร้างคุณค่าให้กับองค์กร',
-  },
-  {
-    key: 'c03',
-    title: 'มีไหวพริบแก้ปัญหาเฉพาะหน้าได้',
-    desc: 'ความสามารถในการวิเคราะห์สถานการณ์ ตัดสินใจและแก้ไขปัญหาที่เกิดขึ้นได้อย่างเหมาะสมและทันท่วงที โดยคำนึงถึงผลกระทบต่องาน ทีม และองค์กร',
-  },
-  {
-    key: 'c04',
-    title: 'การทำงานเป็นทีม',
-    desc: 'ความสามารถในการร่วมมือ ประสานงาน และสนับสนุนเพื่อนร่วมงานเพื่อให้บรรลุเป้าหมายของทีมและองค์กร',
-  },
-  {
-    key: 'c05',
-    title: 'การบริการที่ดี',
-    desc: 'ความตั้งใจในการให้บริการ และช่วยเหลือผู้อื่นด้วยความสุภาพ รวดเร็ว และเหมาะสม',
-  },
-  {
-    key: 'c06',
-    title: 'การสื่อสารอย่างมีประสิทธิภาพ',
-    desc: 'ความสามารถในการถ่ายทอดข้อมูล ความคิดเห็น และคำสั่งงานได้อย่างชัดเจนถูกต้อง ครบถ้วน เหมาะสมกับสถานการณ์และสามารถรับฟังผู้อื่นอย่างเข้าใจเพื่อลดความผิดพลาด',
-  },
-  {
-    key: 'c07',
-    title: 'มีความรับผิดชอบ',
-    desc: 'ความตั้งใจในการปฏิบัติงานหน้าที่ที่ได้รับมอบหมายอย่างครบถ้วน ถูกต้อง และภายในระยะเวลาที่กำหนด',
-  },
-  {
-    key: 'c08',
-    title: 'การปรับตัว',
-    desc: 'ความสามารถในการรับมือสถานการณ์ใหม่ การเปลี่ยนแปลงแผนงาน นโยบาย หรือสภาพแวดล้อมในการทำงาน โดยสามารถปรับแนวทางการทำงานได้อย่างเหมาะสม',
-  },
-  {
-    key: 'c09',
-    title: 'การวางแผนและการจัดการ',
-    desc: 'ความสามารถในการกำหนดเป้าหมาย วางแผนงาน จัดสรรทรัพยากร และบริหารจัดการงานให้เป็นไปตามแผนที่กำหนด โดยสามารถควบคุมระยะเวลา คุณภาพ และงบประมาณได้อย่างมีประสิทธิภาพ',
-  },
-  {
-    key: 'c10',
-    title: 'การจัดการทรัพยากร (โครงการ)',
-    desc: 'ความสามารถในการวางแผน จัดสรร ควบคุม และใช้ทรัพยากรของโครงการ เช่น แรงงาน / วัสดุ / อุปกรณ์ / เวลา และงบประมาณ ให้เกิดประโยชน์สูงสุด โดยสอดคล้องกับแผนงาน ระยะเวลา และเป้าหมายโครงการ',
-  },
-  {
-    key: 'c11',
-    title: 'การบริหารเวลา',
-    desc: 'ความสามารถในการวางแผน จัดลำดับความสำคัญ และใช้เวลาในการทำงานอย่างมีประสิทธิภาพ เพื่อให้งานสำเร็จตามกำหนด',
-  },
-  {
-    key: 'c12',
-    title: 'ทักษะการเจรจาต่อรอง',
-    desc: 'ความสามารถในการสื่อสาร เจรจา และหาข้อตกลงร่วมกันกับผู้ที่เกี่ยวข้อง ทั้งภายในและภายนอกองค์กร โดยคำนึงถึงประโยชน์องค์กร',
-  },
-  {
-    key: 'c13',
-    title: 'ความละเอียดรอบคอบ',
-    desc: 'ความสามารถในการปฏิบัติงานอย่างพิถีพิถัน ตรวจสอบความถูกต้องครบถ้วนของข้อมูล เอกสาร และขั้นตอนงานก่อนส่งมอบ เพื่อลดข้อผิดพลาด และรักษามาตรฐานคุณภาพของงาน',
-  },
-  {
-    key: 'c14',
-    title: 'การทำงานเชิงรุก',
-    desc: 'ความสามารถในการมองเห็นปัญหา โอกาส และความเสี่ยงล่วงหน้า และลงมือดำเนินการก่อนที่จะเกิดผลกระทบ',
-  },
-]
+const SCALE_MAX = 10
 
-export const PART1_MAX_RAW = COMPETENCY_LIST.length * 20
+// Helper: get the competency list from config or defaults
+function getCompetencyList(data) {
+  const cfg = data?.competencyConfig
+  if (Array.isArray(cfg?.items) && cfg.items.length > 0) return cfg.items
+  return DEFAULT_COMPETENCIES
+}
+
+// Exported for scoreUtils to use
+export function getCompetencyListFromData(data) {
+  return getCompetencyList(data)
+}
+
+export function getPart1MaxRaw(data) {
+  return getCompetencyList(data).length * SCALE_MAX
+}
+
+export const COMPETENCY_LIST = DEFAULT_COMPETENCIES // backward compat — but prefer getCompetencyList(data)
+export const PART1_MAX_RAW = DEFAULT_COMPETENCIES.length * SCALE_MAX
 export const PART1_WEIGHTS = { Staff: 0.20, Supervisor: 0.50, Stakeholder: 0.30, HR: 0.50 }
 
 function commentRequired(score) {
-  return score < 10 || score > 18
+  return score < (SCALE_MAX * 0.4) || score > (SCALE_MAX * 0.9) // <4 or >9
 }
 
 function scoreColor(s) {
-  if (s <= 5)  return { track: '#ef4444', text: 'text-red-600',    bg: 'bg-red-50',    border: 'border-red-200',    badge: 'text-red-700'    }
-  if (s <= 9)  return { track: '#fb923c', text: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200', badge: 'text-orange-700' }
-  if (s <= 14) return { track: '#facc15', text: 'text-yellow-600', bg: 'bg-yellow-50', border: 'border-yellow-200', badge: 'text-yellow-700' }
-  if (s <= 18) return { track: '#22c55e', text: 'text-green-600',  bg: 'bg-green-50',  border: 'border-green-200',  badge: 'text-green-700'  }
+  if (s <= 2) return { track: '#ef4444', text: 'text-red-600',    bg: 'bg-red-50',    border: 'border-red-200',    badge: 'text-red-700'    }
+  if (s <= 4) return { track: '#fb923c', text: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200', badge: 'text-orange-700' }
+  if (s <= 6) return { track: '#facc15', text: 'text-yellow-600', bg: 'bg-yellow-50', border: 'border-yellow-200', badge: 'text-yellow-700' }
+  if (s <= 8) return { track: '#22c55e', text: 'text-green-600',  bg: 'bg-green-50',  border: 'border-green-200',  badge: 'text-green-700'  }
   return       { track: '#6366f1', text: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200', badge: 'text-indigo-700' }
 }
 
 function bandLabel(s) {
-  if (s <= 5)  return 'ต้องปรับปรุง'
-  if (s <= 9)  return 'ต่ำกว่ามาตรฐาน'
-  if (s <= 14) return 'พอใช้'
-  if (s <= 18) return 'ดี'
+  if (s <= 2) return 'ต้องปรับปรุง'
+  if (s <= 4) return 'ต่ำกว่ามาตรฐาน'
+  if (s <= 6) return 'พอใช้'
+  if (s <= 8) return 'ดี'
   return 'ดีเยี่ยม'
 }
 
 function CompetencyRow({ num, item, score, comment, onChange, onCommentChange, disabled }) {
   const [open, setOpen] = useState(false)
   const c = scoreColor(score)
-  const pct = (score / 20) * 100
+  const pct = (score / SCALE_MAX) * 100
   const needsComment = commentRequired(score)
 
   return (
@@ -126,18 +73,20 @@ function CompetencyRow({ num, item, score, comment, onChange, onCommentChange, d
             <p className="text-sm font-semibold text-gray-900 leading-snug">{item.title}</p>
             <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border bg-white/70 text-xs font-bold shrink-0 ${c.border} ${c.badge}`}>
               <span className="text-base font-extrabold" style={{ color: c.track }}>{score}</span>
-              <span className="opacity-60">/ 20</span>
+              <span className="opacity-60">/ {SCALE_MAX}</span>
               <span className="opacity-70">· {bandLabel(score)}</span>
             </div>
           </div>
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 mt-1 transition-colors"
-          >
-            {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-            {open ? 'ซ่อนคำอธิบาย' : 'ดูคำอธิบาย'}
-          </button>
-          {open && (
+          {item.desc && (
+            <button
+              onClick={() => setOpen((v) => !v)}
+              className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 mt-1 transition-colors"
+            >
+              {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+              {open ? 'ซ่อนคำอธิบาย' : 'ดูคำอธิบาย'}
+            </button>
+          )}
+          {open && item.desc && (
             <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">{item.desc}</p>
           )}
         </div>
@@ -146,21 +95,21 @@ function CompetencyRow({ num, item, score, comment, onChange, onCommentChange, d
       {/* Slider */}
       <div className="mt-3 px-1">
         <div className="flex h-1 rounded-full overflow-hidden mb-2 gap-px">
-          <div className="flex-[30] bg-red-300 rounded-l-full" />
+          <div className="flex-[20] bg-red-300 rounded-l-full" />
           <div className="flex-[20] bg-orange-300" />
-          <div className="flex-[25] bg-yellow-300" />
+          <div className="flex-[20] bg-yellow-300" />
           <div className="flex-[20] bg-green-400" />
-          <div className="flex-[5]  bg-indigo-400 rounded-r-full" />
+          <div className="flex-[20] bg-indigo-400 rounded-r-full" />
         </div>
         <input
-          type="range" min={0} max={20} step={1} value={score} disabled={disabled}
+          type="range" min={0} max={SCALE_MAX} step={1} value={score} disabled={disabled}
           onChange={(e) => onChange(Number(e.target.value))}
           className="w-full h-2 rounded-full appearance-none cursor-pointer disabled:cursor-not-allowed"
           style={{ background: `linear-gradient(to right, ${c.track} ${pct}%, #e5e7eb ${pct}%)` }}
         />
         <div className="flex justify-between text-[10px] text-gray-400 font-medium mt-1 px-0.5">
-          <span>0</span><span className="text-red-400">5</span><span className="text-orange-400">9</span>
-          <span className="text-yellow-500">14</span><span className="text-green-500">18</span><span className="text-indigo-500">20</span>
+          <span>0</span><span className="text-red-400">2</span><span className="text-orange-400">4</span>
+          <span className="text-yellow-500">6</span><span className="text-green-500">8</span><span className="text-indigo-500">{SCALE_MAX}</span>
         </div>
       </div>
 
@@ -170,9 +119,9 @@ function CompetencyRow({ num, item, score, comment, onChange, onCommentChange, d
           <div className="flex items-center gap-1.5 mb-1.5">
             <AlertCircle size={12} className="text-amber-500 shrink-0" />
             <p className="text-xs font-semibold text-amber-600">
-              {score < 10
-                ? 'กรุณาระบุเหตุผลและยกตัวอย่างประกอบ (คะแนนต่ำกว่า 10)'
-                : 'กรุณาระบุเหตุผลและยกตัวอย่างที่ชัดเจน (คะแนนสูงกว่า 18)'}
+              {score < SCALE_MAX * 0.4
+                ? 'กรุณาระบุเหตุผลและยกตัวอย่างประกอบ (คะแนนต่ำ)'
+                : 'กรุณาระบุเหตุผลและยกตัวอย่างที่ชัดเจน (คะแนนสูง)'}
             </p>
           </div>
         )}
@@ -183,9 +132,9 @@ function CompetencyRow({ num, item, score, comment, onChange, onCommentChange, d
           onChange={(e) => onCommentChange(e.target.value)}
           placeholder={
             needsComment
-              ? score < 10
-                ? 'ระบุเหตุผลที่ให้คะแนนต่ำกว่า 10 พร้อมยกตัวอย่างประกอบ...'
-                : 'ระบุเหตุผลที่ให้คะแนนสูงกว่า 18 พร้อมยกตัวอย่างที่เห็นภาพ...'
+              ? score < SCALE_MAX * 0.4
+                ? 'ระบุเหตุผลที่ให้คะแนนต่ำ พร้อมยกตัวอย่างประกอบ...'
+                : 'ระบุเหตุผลที่ให้คะแนนสูง พร้อมยกตัวอย่างที่เห็นภาพ...'
               : 'หมายเหตุเพิ่มเติม (ไม่บังคับ)...'
           }
           className={`w-full px-3 py-2 text-sm rounded-lg border resize-none focus:outline-none focus:ring-2 bg-white disabled:bg-gray-50 disabled:text-gray-400 placeholder:text-gray-300 ${
@@ -202,22 +151,26 @@ function CompetencyRow({ num, item, score, comment, onChange, onCommentChange, d
   )
 }
 
-const BLANK = () => Object.fromEntries(COMPETENCY_LIST.map((c) => [c.key, { score: 10, comment: '' }]))
-
-function buildInitial(existing) {
-  if (!existing?.scores) return BLANK()
-  return Object.fromEntries(
-    COMPETENCY_LIST.map((c) => [
-      c.key,
-      { score: existing.scores[c.key]?.score ?? 10, comment: existing.scores[c.key]?.comment ?? '' },
-    ])
-  )
-}
-
 export default function Part1Competency({ staffId, quarter, year, evaluatorRole }) {
   const { currentUser, saveEvaluation, getEvaluation, getUserById, data } = useApp()
 
+  const competencyList = getCompetencyList(data)
+  const maxRaw = competencyList.length * SCALE_MAX
+
   const existing = getEvaluation(year, quarter, staffId, currentUser.id, 'part1')
+
+  const buildInitial = (existing) => {
+    if (!existing?.scores) {
+      return Object.fromEntries(competencyList.map((c) => [c.key, { score: Math.round(SCALE_MAX / 2), comment: '' }]))
+    }
+    return Object.fromEntries(
+      competencyList.map((c) => [
+        c.key,
+        { score: existing.scores[c.key]?.score ?? Math.round(SCALE_MAX / 2), comment: existing.scores[c.key]?.comment ?? '' },
+      ])
+    )
+  }
+
   const [scores, setScores] = useState(() => buildInitial(existing))
   const [saved, setSaved] = useState(!!existing)
   const [errors, setErrors] = useState([])
@@ -233,12 +186,11 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
     setScores((p) => ({ ...p, [key]: { ...p[key], comment } }))
   }
 
-  const rawTotal = COMPETENCY_LIST.reduce((s, c) => s + scores[c.key].score, 0)
-  const maxRaw = PART1_MAX_RAW
+  const rawTotal = competencyList.reduce((s, c) => s + (scores[c.key]?.score ?? 0), 0)
 
   const validate = () => {
-    const missing = COMPETENCY_LIST.filter(
-      (c) => commentRequired(scores[c.key].score) && !scores[c.key].comment.trim()
+    const missing = competencyList.filter(
+      (c) => commentRequired(scores[c.key]?.score ?? 0) && !(scores[c.key]?.comment ?? '').trim()
     ).map((c) => c.title)
     setErrors(missing)
     return missing.length === 0
@@ -258,7 +210,7 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
     setErrors([])
   }
 
-  // Preview weighted score (needs all 3 evaluators)
+  // Preview weighted score
   const allP1 = data.quarterlyEvaluations.filter(
     (e) => e.staffId === staffId && e.year === year && e.quarter === quarter && e.part === 'part1'
   )
@@ -272,13 +224,18 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
     const supRaw = saved_sup?.rawTotal ?? 0
     const stRaw = saved_stake?.rawTotal ?? 0
     const hrRaw = saved_hr?.rawTotal ?? 0
-    // สูตรปกติ: Staff 20% + Supervisor 50% + Stakeholder 30%; ถ้ามี HR ใช้แทน Supervisor เมื่อไม่มี Sup
     const effectiveSup = saved_sup ? supRaw : (saved_hr ? hrRaw : 0)
     const weighted = sRaw * 0.20 + effectiveSup * 0.50 + stRaw * 0.30
     return Math.round((weighted / maxRaw) * 30 * 100) / 100
   })()
 
   const myEstimate = Math.round((rawTotal / maxRaw) * 30 * 100) / 100
+
+  const isComplete = competencyList.every((c) => {
+    const s = scores[c.key]?.score ?? Math.round(SCALE_MAX / 2)
+    const comm = scores[c.key]?.comment ?? ''
+    return !commentRequired(s) || comm.trim() !== ''
+  })
 
   return (
     <div className="space-y-4">
@@ -306,9 +263,19 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
             <p className="text-[10px] text-gray-400">คะแนนของฉัน ({rawTotal}/{maxRaw})</p>
             <p className="text-lg font-extrabold text-indigo-500">{myEstimate} <span className="text-xs font-normal text-gray-400">pt weighted</span></p>
           </div>
-          <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition-colors">
-            <Save size={14} /> บันทึก
-          </button>
+          {!saved && (
+            <button
+              onClick={handleSave}
+              disabled={!isComplete}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                isComplete 
+                  ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              <Save size={14} /> บันทึก
+            </button>
+          )}
         </div>
       </div>
 
@@ -318,7 +285,7 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
         <div className="text-xs text-indigo-700">
           <p className="font-semibold mb-1">สูตรคำนวณคะแนน Part 1 (รวม 30 คะแนน)</p>
           <p>[ Staff×20% + Supervisor×50% + Stakeholder×30% ] / {maxRaw} × 30</p>
-          <p className="mt-1 text-indigo-500">แต่ละหัวข้อมีคะแนนเต็ม 20 คะแนน รวม 14 หัวข้อ = {maxRaw} คะแนน</p>
+          <p className="mt-1 text-indigo-500">แต่ละหัวข้อมีคะแนนเต็ม {SCALE_MAX} คะแนน รวม {competencyList.length} หัวข้อ = {maxRaw} คะแนน</p>
         </div>
       </div>
 
@@ -348,7 +315,7 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
         </div>
       )}
 
-      {/* Weighted preview box (when all 3 evaluators have submitted) */}
+      {/* Weighted preview box */}
       {previewWeighted !== null && (
         <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl border border-indigo-200 px-5 py-4">
           <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide mb-3">สรุปคะแนน Part 1 (ถ่วงน้ำหนัก)</p>
@@ -377,16 +344,16 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
 
       {/* Competency rows */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {COMPETENCY_LIST.map((item, idx) => (
+        {competencyList.map((item, idx) => (
           <CompetencyRow
             key={item.key}
             num={idx + 1}
             item={item}
-            score={scores[item.key].score}
-            comment={scores[item.key].comment}
+            score={scores[item.key]?.score ?? Math.round(SCALE_MAX / 2)}
+            comment={scores[item.key]?.comment ?? ''}
             onChange={(v) => updateScore(item.key, v)}
             onCommentChange={(v) => updateComment(item.key, v)}
-            disabled={false}
+            disabled={saved}
           />
         ))}
       </div>
@@ -400,9 +367,9 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
           </p>
         </div>
         <div className="flex gap-0.5">
-          {COMPETENCY_LIST.map((item) => {
-            const s = scores[item.key].score
-            const pct = (s / 20) * 100
+          {competencyList.map((item) => {
+            const s = scores[item.key]?.score ?? 0
+            const pct = (s / SCALE_MAX) * 100
             const c = scoreColor(s)
             return (
               <div key={item.key} className="flex-1">
@@ -414,7 +381,7 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole 
           })}
         </div>
         <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-          <span>ข้อ 1</span><span>ข้อ 14</span>
+          <span>ข้อ 1</span><span>ข้อ {competencyList.length}</span>
         </div>
       </div>
     </div>

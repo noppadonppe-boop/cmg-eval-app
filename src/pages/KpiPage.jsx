@@ -5,20 +5,13 @@ import { subscribeAllUsers } from '../services/authService'
 import {
   Target, PlusCircle, CheckCircle2, XCircle, Clock, Pencil, Trash2,
   AlertCircle, Check, X, ChevronDown, ChevronUp, Filter, Eye, Save,
-  Info, Star,
+  Info, Star, Users, UserCircle2
 } from 'lucide-react'
-
-/**
- * Part 3 — KPI (30 pts)
- * - Supervisor assigns ≤3 KPIs per staff per quarter (งานที่มอบหมาย, วิธีประเมิน, หมายเหตุ)
- * - Each KPI scored 0–10 pts by both Staff (40%) and Supervisor (60%)
- * - Formula: Staff_total×0.40 + Sup_total×0.60 → out of 30 pts
- * - Staff must accept each KPI; rejected KPIs return to Supervisor
- */
 
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4']
 const KPI_MAX_PER_QUARTER = 3
 const KPI_TOTAL_SCORE = 30
+
 // Points per item = KPI_TOTAL_SCORE ÷ number of KPIs assigned (dynamic)
 const kpiMaxPerItem = (count) => (count > 0 ? KPI_TOTAL_SCORE / count : KPI_TOTAL_SCORE)
 
@@ -647,11 +640,18 @@ function SupervisorView({ allUsers }) {
 // ─── Staff View ───────────────────────────────────────────────────────────────
 
 function StaffView({ allUsers }) {
-  const { data, selectedYear, currentUser, respondKpi, saveEvaluation, getEvaluation } = useApp()
+  const { data, selectedYear, activeQuarter, currentUser, respondKpi, saveEvaluation, getEvaluation } = useApp()
   const [rejectModal, setRejectModal] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
   const [rejectError, setRejectError] = useState('')
-  const [filterQuarter, setFilterQuarter] = useState('Q1')
+
+  // Automatically select the quarter that has pending KPIs, otherwise fallback to activeQuarter
+  const [filterQuarter, setFilterQuarter] = useState(() => {
+    const kpis = data.kpis.filter((k) => k.staffId === currentUser.id && k.year === selectedYear)
+    const pendingQ = QUARTERS.find(q => kpis.some(k => k.quarter === q && k.status === 'Pending'))
+    return pendingQ || activeQuarter || 'Q1'
+  })
+
   const [staffScores, setStaffScores] = useState({})
   const [scoringSaved, setScoringSaved] = useState({})
 
@@ -993,6 +993,7 @@ export default function KpiPage() {
   const { data, currentUser, selectedYear } = useApp()
   const { role } = useRBAC()
   const [firebaseUsers, setFirebaseUsers] = useState([])
+  const [activeViewId, setActiveViewId] = useState('')
 
   useEffect(() => subscribeAllUsers((list) => setFirebaseUsers(list.map(normalizeAnyUser).filter(Boolean))), [])
   useEffect(() => {
@@ -1010,14 +1011,22 @@ export default function KpiPage() {
   )
   const isExecOrHR = ['HR', 'HRM', 'GM', 'MD'].includes(role)
 
-  // ถ้าเป็น supervisor ของใครก็ตาม ให้แสดงฟอร์มกำหนด KPI และรายชื่อ staff (รวมถึง HR ที่เป็น supervisor)
+  const availableViews = []
+  if (isAssignedAsStaff) availableViews.push({ id: 'staff', label: 'การประเมินตนเอง (Staff)', icon: UserCircle2 })
+  if (isSupervisor) availableViews.push({ id: 'sup', label: 'การประเมินทีม (Supervisor)', icon: Users })
+  if (isExecOrHR) availableViews.push({ id: 'hr', label: 'ภาพรวมพนักงาน (HR/MD)', icon: Eye })
+
+  const actualViewId = availableViews.some((v) => v.id === activeViewId)
+    ? activeViewId
+    : availableViews[0]?.id
+
   let view
-  if (isSupervisor) {
-    view = <SupervisorView allUsers={allUsers} />
-  } else if (isExecOrHR) {
-    view = <OverviewView allUsers={allUsers} />
-  } else if (isAssignedAsStaff) {
+  if (actualViewId === 'staff') {
     view = <StaffView allUsers={allUsers} />
+  } else if (actualViewId === 'sup') {
+    view = <SupervisorView allUsers={allUsers} />
+  } else if (actualViewId === 'hr') {
+    view = <OverviewView allUsers={allUsers} />
   } else {
     view = (
       <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -1030,7 +1039,7 @@ export default function KpiPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3">
           <div className="bg-blue-50 p-2.5 rounded-xl"><Target size={22} className="text-blue-600" /></div>
           <div>
@@ -1047,6 +1056,26 @@ export default function KpiPage() {
           </div>
         </div>
       </div>
+
+      {availableViews.length > 1 && (
+        <div className="flex bg-white border border-gray-200 p-1 rounded-xl w-fit overflow-x-auto hide-scrollbar max-w-full shadow-sm mb-2">
+          {availableViews.map(v => (
+            <button
+              key={v.id}
+              onClick={() => setActiveViewId(v.id)}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all shrink-0 ${
+                actualViewId === v.id
+                  ? 'bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-200'
+                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <v.icon size={16} />
+              {v.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {view}
     </div>
   )

@@ -1,17 +1,19 @@
 import { useState } from 'react'
-import { Settings, CalendarDays, Users, GitBranch, ShieldOff, Shield } from 'lucide-react'
+import { Settings, CalendarDays, Users, GitBranch, ShieldOff, Shield, BookOpen } from 'lucide-react'
 import useRBAC from '../hooks/useRBAC'
 import { useApp } from '../context/AppContext'
 import YearsTab from '../components/admin/YearsTab'
 import UsersTab from '../components/admin/UsersTab'
 import HierarchyTab from '../components/admin/HierarchyTab'
 import DisciplineTab from '../components/admin/DisciplineTab'
+import CompetencyTab from '../components/admin/CompetencyTab'
 
 const TABS = [
   { id: 'years',     label: 'Evaluation Years', icon: <CalendarDays size={15} /> },
   { id: 'users',     label: 'Users',             icon: <Users size={15} /> },
   { id: 'hierarchy', label: 'Hierarchy',          icon: <GitBranch size={15} /> },
   { id: 'discipline', label: 'Discipline',        icon: <Shield size={15} /> },
+  { id: 'competency', label: 'Competency',         icon: <BookOpen size={15} /> },
 ]
 
 export default function AdminPage() {
@@ -54,12 +56,12 @@ export default function AdminPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit overflow-x-auto hide-scrollbar max-w-full">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 ${
               activeTab === tab.id
                 ? 'bg-white text-gray-900 shadow-sm'
                 : 'text-gray-500 hover:text-gray-700'
@@ -76,6 +78,7 @@ export default function AdminPage() {
       {activeTab === 'users'     && <UsersTab />}
       {activeTab === 'hierarchy' && <HierarchyTab />}
       {activeTab === 'discipline' && <DisciplineTab />}
+      {activeTab === 'competency' && <CompetencyTab />}
     </div>
   )
 }
