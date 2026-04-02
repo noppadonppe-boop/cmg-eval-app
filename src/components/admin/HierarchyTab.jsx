@@ -106,7 +106,7 @@ function MultiSelect({ options, selected, onChange, placeholder, maxSelected = n
         <ChevronDown size={14} className={`text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden py-1 max-h-60 overflow-y-auto">
+        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden py-1 max-h-[70vh] overflow-y-auto">
           {options.map((o) => (
             <button
               key={o.id}
@@ -121,7 +121,6 @@ function MultiSelect({ options, selected, onChange, placeholder, maxSelected = n
                     : 'hover:bg-gray-50'
               }`}
             >
-              <Avatar user={o} />
               <span className="flex-1 text-left font-medium text-gray-900">{o.name}</span>
               {selected.includes(o.id) && <Check size={14} className="text-indigo-600 shrink-0" />}
             </button>
@@ -143,6 +142,8 @@ export default function HierarchyTab() {
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [firebaseUsers, setFirebaseUsers] = useState([])
+  const [assignedSearch, setAssignedSearch] = useState('')
+  const [unassignedSearch, setUnassignedSearch] = useState('')
   const [supSupervisorId, setSupSupervisorId] = useState('')
   const [supStaffIds, setSupStaffIds] = useState([])
   const [stakeStaffId, setStakeStaffId] = useState('')
@@ -177,6 +178,47 @@ export default function HierarchyTab() {
   }
 
   const getUserById = (id) => allUsers.find((u) => u.id === id)
+
+  // Find users without Supervisor or Stakeholder assignments
+  const unassignedUsers = evaluatableUsers.filter((user) => {
+    const cfg = yearConfigs.find((c) => c.staffId === user.id)
+    if (!cfg) return true
+    const hasNoSupervisor = !cfg.supervisorId
+    const hasNoStakeholders = !cfg.stakeholderIds || cfg.stakeholderIds.length === 0
+    return hasNoSupervisor && hasNoStakeholders
+  })
+
+  const normalizedAssignedSearch = assignedSearch.trim().toLowerCase()
+  const normalizedUnassignedSearch = unassignedSearch.trim().toLowerCase()
+
+  const filteredYearConfigs = [...yearConfigs]
+    .sort((a, b) => {
+      const staffA = getUserById(a.staffId)
+      const staffB = getUserById(b.staffId)
+      return sortByName(staffA || { name: '' }, staffB || { name: '' })
+    })
+    .filter((cfg) => {
+      if (!normalizedAssignedSearch) return true
+      const staff = getUserById(cfg.staffId)
+      const supervisor = getUserById(cfg.supervisorId)
+      const stakeholders = (cfg.stakeholderIds || []).map(getUserById).filter(Boolean)
+      const searchHaystack = [
+        staff?.name,
+        supervisor?.name,
+        staff?.role,
+        ...stakeholders.map((s) => s.name),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return searchHaystack.includes(normalizedAssignedSearch)
+    })
+
+  const filteredUnassignedUsers = unassignedUsers.filter((user) => {
+    if (!normalizedUnassignedSearch) return true
+    const searchHaystack = [user.name, user.role].filter(Boolean).join(' ').toLowerCase()
+    return searchHaystack.includes(normalizedUnassignedSearch)
+  })
 
   // Req 5: Cross disable forms
   const isSupActive = supSupervisorId !== '' || supStaffIds.length > 0
@@ -504,7 +546,16 @@ export default function HierarchyTab() {
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-gray-900">การ Assign พนักงาน — {selectedYear}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">{yearConfigs.length} รายการ</p>
+            <p className="text-xs text-gray-500 mt-0.5">{filteredYearConfigs.length} / {yearConfigs.length} รายการ</p>
+          </div>
+          <div className="w-full max-w-xs">
+            <input
+              type="text"
+              value={assignedSearch}
+              onChange={(e) => setAssignedSearch(e.target.value)}
+              placeholder="ค้นหารายชื่อ Staff, Supervisor, Stakeholder..."
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
           </div>
         </div>
 
@@ -513,6 +564,12 @@ export default function HierarchyTab() {
             <Users size={32} className="text-gray-200 mx-auto mb-3" />
             <p className="text-sm text-gray-400 font-medium">ยังไม่มีการ Assign พนักงานสำหรับปี {selectedYear}</p>
             <p className="text-xs text-gray-400 mt-1">เพิ่ม Assignment ด้านบน หรือสร้างปีใหม่เพื่อโคลนโครงสร้างจากปีก่อนหน้า</p>
+          </div>
+        ) : filteredYearConfigs.length === 0 ? (
+          <div className="px-4 py-10 text-center">
+            <Users size={32} className="text-gray-200 mx-auto mb-3" />
+            <p className="text-sm text-gray-400 font-medium">ไม่พบรายชื่อที่ค้นหา</p>
+            <p className="text-xs text-gray-400 mt-1">ลองค้นหาด้วยชื่อ Staff, Supervisor หรือ Stakeholder</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -527,7 +584,7 @@ export default function HierarchyTab() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 text-xs">
-                {yearConfigs.map((cfg) => {
+                {filteredYearConfigs.map((cfg) => {
                   const staff = getUserById(cfg.staffId)
                   const supervisor = getUserById(cfg.supervisorId)
                   const stakeholders = (cfg.stakeholderIds || []).map(getUserById).filter(Boolean)
@@ -600,6 +657,93 @@ export default function HierarchyTab() {
                           >
                             <Trash2 size={14} />
                           </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Unassigned Users Section */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mt-4">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">User ที่ยังไม่ได้ Assign Supervisor/Stakeholder — {selectedYear}</h3>
+            <p className="text-xs text-gray-500 mt-0.5">{filteredUnassignedUsers.length} / {unassignedUsers.length} รายการ</p>
+          </div>
+          <div className="w-full max-w-xs">
+            <input
+              type="text"
+              value={unassignedSearch}
+              onChange={(e) => setUnassignedSearch(e.target.value)}
+              placeholder="ค้นหารายชื่อ User หรือ Role..."
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+        </div>
+
+        {unassignedUsers.length === 0 ? (
+          <div className="px-4 py-8 text-center">
+            <Users size={28} className="text-green-200 mx-auto mb-2" />
+            <p className="text-sm text-green-600 font-medium">ทุกคนได้รับการ Assign แล้ว</p>
+            <p className="text-xs text-gray-400 mt-1">พนักงานทุกคนมี Supervisor หรือ Stakeholder แล้ว</p>
+          </div>
+        ) : filteredUnassignedUsers.length === 0 ? (
+          <div className="px-4 py-8 text-center">
+            <Users size={28} className="text-gray-200 mx-auto mb-2" />
+            <p className="text-sm text-gray-400 font-medium">ไม่พบรายชื่อที่ค้นหา</p>
+            <p className="text-xs text-gray-400 mt-1">ลองค้นหาด้วยชื่อ User หรือ Role</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse whitespace-nowrap">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-[11px] text-gray-500 font-semibold uppercase tracking-wider">
+                  <th className="px-4 py-2.5 font-medium">Staff</th>
+                  <th className="px-4 py-2.5 font-medium">Role</th>
+                  <th className="px-4 py-2.5 font-medium">สถานะ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-xs">
+                {filteredUnassignedUsers.map((user) => {
+                  const cfg = yearConfigs.find((c) => c.staffId === user.id)
+                  const hasNoSupervisor = !cfg || !cfg.supervisorId
+                  const hasNoStakeholders = !cfg || !cfg.stakeholderIds || cfg.stakeholderIds.length === 0
+
+                  return (
+                    <tr key={user.id} className="hover:bg-orange-50/40 transition-colors group">
+                      {/* Staff */}
+                      <td className="px-4 py-2 align-middle">
+                        <div className="flex items-center gap-2">
+                          <Avatar user={user} size="sm" />
+                          <span className="font-semibold text-gray-900 truncate max-w-[180px]" title={user.name}>{user.name}</span>
+                        </div>
+                      </td>
+
+                      {/* Role */}
+                      <td className="px-4 py-2 align-middle border-l border-gray-50">
+                        <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-full ${ROLE_BADGE_CLASSES[user.role]}`}>
+                          {user.role}
+                        </span>
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-4 py-2 align-middle border-l border-gray-50">
+                        <div className="flex flex-wrap gap-1">
+                          {hasNoSupervisor && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">
+                              ไม่มี Supervisor
+                            </span>
+                          )}
+                          {hasNoStakeholders && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded bg-yellow-100 text-yellow-700 border border-yellow-200">
+                              ไม่มี Stakeholder
+                            </span>
+                          )}
                         </div>
                       </td>
                     </tr>

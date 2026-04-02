@@ -47,7 +47,7 @@ function ProfileAvatar({ user, size = 'md' }) {
 
 export default function Layout() {
   const { userProfile, logout, firebaseUser, hasConfig } = useAuth()
-  const { data, currentUser, selectedYear: rawSelectedYear, setSelectedYear } = useApp()
+  const { data, currentUser, activeQuarter, selectedYear: rawSelectedYear, setSelectedYear } = useApp()
   const { can, roles } = useRBAC()
   const location = useLocation()
 
@@ -80,8 +80,12 @@ export default function Layout() {
     '/': true,
   }
 
+  const canSeeStatusEvaluation = ['HR', 'HRM', 'GM', 'MD', 'MasterAdmin'].some(
+    (r) => (roles || []).includes(r) || currentUser?.role === r
+  )
+
   // Calculate pending evaluation count
-  const quarter = data?.activeQuarter || 'Q1'
+  const quarter = activeQuarter || 'Q1'
   const kpiPendingCount = data?.kpis?.filter(
     k => k.staffId === currentUser?.id && k.year === selectedYear && k.status === 'Pending'
   ).length || 0
@@ -164,6 +168,74 @@ export default function Layout() {
     })
     
     return count
+  })()
+
+  const statusEvalPendingCount = (() => {
+    if (!canSeeStatusEvaluation) return 0
+
+    const yearConfigs = data?.staffConfigs?.filter((c) => c.year === selectedYear) || []
+    const evaluations = data?.quarterlyEvaluations || []
+
+    const findEval = (staffId, evaluatorId, part, evaluatorRole = null) =>
+      evaluations.find(
+        (e) =>
+          e.year === selectedYear &&
+          e.quarter === quarter &&
+          e.staffId === staffId &&
+          e.evaluatorId === evaluatorId &&
+          e.part === part &&
+          (evaluatorRole ? e.evaluatorRole === evaluatorRole : true)
+      )
+
+    const part2Exists = (staffId) =>
+      evaluations.some(
+        (e) => e.year === selectedYear && e.quarter === quarter && e.staffId === staffId && e.part === 'part2'
+      )
+
+    const isSelfDone = (staffId) =>
+      !!(
+        part2Exists(staffId) &&
+        findEval(staffId, staffId, 'part1', 'Staff') &&
+        findEval(staffId, staffId, 'part3_staff', 'Staff') &&
+        findEval(staffId, staffId, 'part4', 'Staff')
+      )
+
+    const isSupervisorDone = (staffId, supervisorId) =>
+      !!(
+        supervisorId &&
+        part2Exists(staffId) &&
+        findEval(staffId, supervisorId, 'part1', 'Supervisor') &&
+        findEval(staffId, supervisorId, 'part3_sup', 'Supervisor') &&
+        findEval(staffId, supervisorId, 'part4', 'Supervisor')
+      )
+
+    const isStakeholderDone = (staffId, stakeholderId) =>
+      !!(
+        stakeholderId &&
+        part2Exists(staffId) &&
+        findEval(staffId, stakeholderId, 'part1', 'Stakeholder') &&
+        findEval(staffId, stakeholderId, 'part4', 'Stakeholder')
+      )
+
+    const pendingSelfCount = yearConfigs.reduce(
+      (sum, c) => sum + (isSelfDone(c.staffId) ? 0 : 1),
+      0
+    )
+    const pendingSupervisorCount = yearConfigs.reduce(
+      (sum, c) => sum + (c.supervisorId && !isSupervisorDone(c.staffId, c.supervisorId) ? 1 : 0),
+      0
+    )
+    const pendingStakeholderCount = yearConfigs.reduce(
+      (sum, c) =>
+        sum +
+        (c.stakeholderIds || []).reduce(
+          (inner, stakeholderId) => inner + (isStakeholderDone(c.staffId, stakeholderId) ? 0 : 1),
+          0
+        ),
+      0
+    )
+
+    return pendingSelfCount + pendingSupervisorCount + pendingStakeholderCount
   })()
 
   // Subscribe to pending count (MasterAdmin only)
@@ -419,6 +491,21 @@ export default function Layout() {
                 >
                   <Icon size={18} className={`shrink-0 ${isActive && !showUserMgmt ? 'text-white' : 'text-gray-400'}`} />
                   {!collapsed && <span className="flex-1 whitespace-nowrap overflow-hidden">{link.label}</span>}
+
+                  {/* Status Evaluation Pending Badge on Dashboard (Expanded) */}
+                  {!collapsed && link.to === '/' && canSeeStatusEvaluation && statusEvalPendingCount > 0 && (
+                    <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full min-w-[1.6rem] text-center animate-pulse ${
+                      isActive && !showUserMgmt ? 'bg-white text-red-600' : 'bg-red-600 text-white'
+                    }`}>
+                      {statusEvalPendingCount}
+                    </span>
+                  )}
+                  {/* Status Evaluation Pending Badge on Dashboard (Collapsed) */}
+                  {collapsed && link.to === '/' && canSeeStatusEvaluation && statusEvalPendingCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center border border-white animate-pulse">
+                      {statusEvalPendingCount}
+                    </span>
+                  )}
                   
                   {/* Eval Pending Badge (Expanded) */}
                   {!collapsed && link.to === '/eval' && evalPendingCount > 0 && (
@@ -570,6 +657,13 @@ export default function Layout() {
               >
                 <Icon size={18} className={isActive && !showUserMgmt ? 'text-white' : 'text-gray-400'} />
                 <span className="flex-1">{link.label}</span>
+                {link.to === '/' && canSeeStatusEvaluation && statusEvalPendingCount > 0 && (
+                  <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full min-w-[1.6rem] text-center animate-pulse ${
+                    isActive && !showUserMgmt ? 'bg-white text-red-600' : 'bg-red-600 text-white'
+                  }`}>
+                    {statusEvalPendingCount}
+                  </span>
+                )}
                 {link.to === '/eval' && evalPendingCount > 0 && (
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.2rem] text-center ${
                     isActive && !showUserMgmt ? 'bg-white text-indigo-600' : 'bg-red-500 text-white'

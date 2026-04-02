@@ -695,6 +695,7 @@ export default function EvalPage() {
                     <Part4JobDescription
                       key={`part4-${effectiveStaffId}-${quarter}-${selectedYear}-${ctxRole}`}
                       staffId={effectiveStaffId}
+                      staff={selectedStaffObj}
                       quarter={quarter}
                       year={selectedYear}
                       evaluatorRole={ctxRole}

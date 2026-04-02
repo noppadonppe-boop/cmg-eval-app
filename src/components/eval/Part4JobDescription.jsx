@@ -12,7 +12,7 @@ const EVAL_ROLE_BADGE = {
   MD:          'bg-red-100 text-red-800 ring-red-200',
 }
 
-export default function Part4JobDescription({ staffId, quarter, year, evaluatorRole = 'Staff', evaluatorContext, onComplete }) {
+export default function Part4JobDescription({ staffId, staff: staffProp = null, quarter, year, evaluatorRole = 'Staff', evaluatorContext, onComplete }) {
   const { currentUser, saveEvaluation, getEvaluation, getUserById, data } = useApp()
   
   // Load evaluation data filtered by evaluatorRole
@@ -26,7 +26,7 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
   const [saved, setSaved] = useState(!!existing)
   const [error, setError] = useState('')
 
-  const staff = getUserById(staffId)
+  const staff = staffProp || getUserById(staffId)
   const needsComment = COMMENT_REQUIRED(score)
   const isComplete = !needsComment || comment.trim() !== ''
 
@@ -52,6 +52,33 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
 
   return (
     <div className="space-y-4">
+      {staff?.jdUrl && (
+        <div className="rounded-2xl border-2 border-purple-300 bg-gradient-to-r from-purple-50 to-indigo-50 px-5 py-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-sm font-bold uppercase tracking-wide text-purple-700">JD Attachment URL</p>
+              <a
+                href={staff.jdUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-flex max-w-full items-center gap-2 text-base sm:text-lg font-semibold text-indigo-700 underline decoration-2 underline-offset-4 break-all hover:text-indigo-900"
+              >
+                <ExternalLink size={18} className="shrink-0" />
+                <span>{staff.jdUrl}</span>
+              </a>
+            </div>
+            <a
+              href={staff.jdUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition-colors"
+            >
+              <ExternalLink size={15} /> Open JD
+            </a>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2.5">
@@ -72,16 +99,6 @@ export default function Part4JobDescription({ staffId, quarter, year, evaluatorR
                 <span className="flex items-center gap-1 text-xs text-indigo-600 font-medium">
                   <IdCard size={11} />{staff.staffCode}
                 </span>
-              )}
-              {staff?.jdUrl && (
-                <a
-                  href={staff.jdUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 border border-purple-200 text-xs text-purple-700 font-medium hover:bg-purple-100 transition-colors"
-                >
-                  <ExternalLink size={11} /> View JD Document
-                </a>
               )}
             </div>
           </div>

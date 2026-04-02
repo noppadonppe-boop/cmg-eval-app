@@ -3,7 +3,8 @@ import { useApp } from '../context/AppContext'
 import useRBAC, { ROLE_BADGE_CLASSES } from '../hooks/useRBAC'
 import Part5Quarterly from '../components/dashboard/Part5Quarterly'
 import Part6ExecAnnual from '../components/dashboard/Part6ExecAnnual'
-import { BarChart2, Users, ClipboardList, TrendingUp, LayoutDashboard, CheckCircle2, XCircle } from 'lucide-react'
+import StatusEvaluation from '../components/dashboard/StatusEvaluation'
+import { BarChart2, Users, ClipboardList, TrendingUp, LayoutDashboard, CheckCircle2, XCircle, ListChecks } from 'lucide-react'
 import { subscribeAllUsers } from '../services/authService'
 
 function StatCard({ label, value, icon, bg }) {
@@ -177,6 +178,7 @@ export default function DashboardPage() {
 
   const showQuarterly = can('canViewQuarterlyDashboard')
   const showAnnual = can('canViewAnnualTrend')
+  const showStatusEval = ['HR', 'HRM', 'GM', 'MD', 'MasterAdmin'].includes(role)
   const showStatsStrip = !['Staff', 'HR', 'HRM'].includes(role)
   const currentQuarter = activeQuarter || 'Q1'
   const allUsers = firebaseUsers.length > 0
@@ -187,6 +189,7 @@ export default function DashboardPage() {
   const tabs = [
     showQuarterly && { id: 'quarterly', label: 'Part 5 — Quarterly', icon: <BarChart2 size={15} /> },
     showAnnual    && { id: 'annual',    label: 'Part 6 — Annual Trend', icon: <TrendingUp size={15} /> },
+    showStatusEval && { id: 'status',    label: 'Status Evaluation', icon: <ListChecks size={15} /> },
   ].filter(Boolean)
 
   const [activeTab, setActiveTab] = useState(tabs[0]?.id || 'quarterly')
@@ -219,6 +222,14 @@ export default function DashboardPage() {
       (e) => e.year === selectedYear && e.quarter === currentQuarter && e.staffId === staffId && e.part === 'part2'
     )
 
+  const isSelfDone = (staffId) =>
+    !!(
+      part2Exists(staffId) &&
+      findEval(staffId, staffId, 'part1', 'Staff') &&
+      findEval(staffId, staffId, 'part3_staff', 'Staff') &&
+      findEval(staffId, staffId, 'part4', 'Staff')
+    )
+
   const isSupervisorDone = (staffId, supervisorId) => {
     if (!supervisorId) return false
     return !!(
@@ -248,12 +259,7 @@ export default function DashboardPage() {
     .map((id) => allUsers.find((u) => u.id === id))
     .filter(Boolean)
 
-  const selfDone = !!(
-    part2Exists(currentUser.id) &&
-    findEval(currentUser.id, currentUser.id, 'part1', 'Staff') &&
-    findEval(currentUser.id, currentUser.id, 'part3_staff', 'Staff') &&
-    findEval(currentUser.id, currentUser.id, 'part4', 'Staff')
-  )
+  const selfDone = isSelfDone(currentUser.id)
 
   const supervisorDone = isSupervisorDone(currentUser.id, mySupervisor?.id)
   const stakeholderStatuses = myStakeholders.map((u) => ({
@@ -272,6 +278,26 @@ export default function DashboardPage() {
       fallbackLabel: 'Stakeholder',
     })),
   ]
+
+  // Pending count for Status Evaluation tab badge (count all "X" / not-yet-evaluated items)
+  const pendingSelfCount = configsThisYear.reduce(
+    (sum, c) => sum + (isSelfDone(c.staffId) ? 0 : 1),
+    0
+  )
+  const pendingSupervisorCount = configsThisYear.reduce(
+    (sum, c) => sum + (c.supervisorId && !isSupervisorDone(c.staffId, c.supervisorId) ? 1 : 0),
+    0
+  )
+  const pendingStakeholderCount = configsThisYear.reduce(
+    (sum, c) =>
+      sum +
+      (c.stakeholderIds || []).reduce(
+        (inner, stakeholderId) => inner + (isStakeholderDone(c.staffId, stakeholderId) ? 0 : 1),
+        0
+      ),
+    0
+  )
+  const statusPendingCount = pendingSelfCount + pendingSupervisorCount + pendingStakeholderCount
 
   return (
     <div className="space-y-6">
@@ -368,6 +394,14 @@ export default function DashboardPage() {
               {tab.id === 'annual' && (
                 <span className="text-[10px] font-bold px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded-full ml-0.5">EXEC</span>
               )}
+              {tab.id === 'status' && statusPendingCount > 0 && (
+                <span
+                  className="ml-1 min-w-7 h-7 px-2 rounded-full bg-red-600 text-white text-sm font-extrabold flex items-center justify-center animate-pulse"
+                  title={`${statusPendingCount} รายการที่ยังไม่ได้ประเมิน`}
+                >
+                  {statusPendingCount}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -381,6 +415,11 @@ export default function DashboardPage() {
       {/* ── Part 6: Annual Exec dashboard — HR, MD only ── */}
       {showAnnual && (activeTab === 'annual' || tabs.length === 1) && (
         <Part6ExecAnnual />
+      )}
+
+      {/* ── Status Evaluation: Who evaluated whom — HR, HRM, GM, MD, MasterAdmin ── */}
+      {showStatusEval && activeTab === 'status' && (
+        <StatusEvaluation />
       )}
 
       {/* Fallback for roles with no dashboard access */}
