@@ -177,7 +177,7 @@ export default function DashboardPage() {
 
   const showQuarterly = can('canViewQuarterlyDashboard')
   const showAnnual = can('canViewAnnualTrend')
-  const showStatsStrip = role !== 'Staff'
+  const showStatsStrip = !['Staff', 'HR', 'HRM'].includes(role)
   const currentQuarter = activeQuarter || 'Q1'
   const allUsers = firebaseUsers.length > 0
     ? firebaseUsers
