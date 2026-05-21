@@ -221,18 +221,21 @@ export default function Part1Competency({ staffId, quarter, year, evaluatorRole,
     (e) => e.staffId === staffId && e.year === year && e.quarter === quarter && e.part === 'part1'
   )
   const previewWeighted = (() => {
-    const saved_staff = allP1.find((e) => e.evaluatorRole === 'Staff')
-    const saved_sup   = allP1.find((e) => e.evaluatorRole === 'Supervisor')
-    const saved_stake = allP1.find((e) => e.evaluatorRole === 'Stakeholder')
-    const saved_hr    = allP1.find((e) => e.evaluatorRole === 'HR')
-    if (!saved_staff && !saved_sup && !saved_stake && !saved_hr) return null
-    const sRaw = saved_staff?.rawTotal ?? 0
-    const supRaw = saved_sup?.rawTotal ?? 0
-    const stRaw = saved_stake?.rawTotal ?? 0
-    const hrRaw = saved_hr?.rawTotal ?? 0
-    const effectiveSup = saved_sup ? supRaw : (saved_hr ? hrRaw : 0)
-    const weighted = sRaw * 0.20 + effectiveSup * 0.50 + stRaw * 0.30
-    return Math.round((weighted / maxRaw) * 30 * 100) / 100
+    const averageRaw = (role) => {
+      const values = allP1
+        .filter((e) => e.evaluatorRole === role && e.rawTotal != null)
+        .map((e) => e.rawTotal)
+      return values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : null
+    }
+    const staffRaw = averageRaw('Staff')
+    const supRaw = averageRaw('Supervisor') ?? averageRaw('HR')
+    const stakeRaw = averageRaw('Stakeholder')
+    if (staffRaw === null && supRaw === null && stakeRaw === null) return null
+    const weighted =
+      (staffRaw ?? 0) * 0.20 +
+      (supRaw ?? 0) * 0.50 +
+      (stakeRaw ?? 0) * 0.30
+    return Math.round(Math.min((weighted / maxRaw) * 30, 30) * 100) / 100
   })()
 
   const myEstimate = Math.round((rawTotal / maxRaw) * 30 * 100) / 100

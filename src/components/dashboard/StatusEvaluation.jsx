@@ -2,6 +2,7 @@ import { useApp } from '../../context/AppContext'
 import { CheckCircle2, XCircle, User } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { subscribeAllUsers } from '../../services/authService'
+import { getYearScorePartUsage } from '../../utils/scoreUtils'
 
 function getInitials(name = '') {
   const parts = String(name).trim().split(/\s+/).filter(Boolean)
@@ -40,6 +41,23 @@ function normalizeAnyUser(u) {
   }
 }
 
+function PartEvidence({ parts, requiredParts }) {
+  if (!requiredParts?.length) return null
+  const doneParts = new Set(parts || [])
+  return (
+    <span className="inline-flex items-center gap-1">
+      {requiredParts.map((part) => {
+        const done = doneParts.has(part)
+        return (
+          <span key={part} className={`text-[10px] font-bold ${done ? 'text-green-600' : 'text-red-500'}`}>
+            {part}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 export default function StatusEvaluation() {
   const { data, selectedYear, activeQuarter } = useApp()
   const [firebaseUsers, setFirebaseUsers] = useState([])
@@ -59,48 +77,59 @@ export default function StatusEvaluation() {
   const configsThisYear = data.staffConfigs.filter((c) => c.year === selectedYear)
 
   // Helper functions to check evaluation completion
-  const findEval = (staffId, evaluatorId, part, evaluatorRole = null) =>
-    (data.quarterlyEvaluations || []).find(
-      (e) =>
-        e.year === selectedYear &&
-        e.quarter === currentQuarter &&
-        e.staffId === staffId &&
-        e.evaluatorId === evaluatorId &&
-        e.part === part &&
-        (evaluatorRole ? e.evaluatorRole === evaluatorRole : true)
+  const hasScore = (e) =>
+    e && (e.rawTotal != null || e.scaledScore != null || e.score != null)
+
+  const includedParts = getYearScorePartUsage(data, selectedYear)
+
+  const getEvaluatorScoreRows = (staffId, evaluatorId, checks) =>
+    (data.quarterlyEvaluations || []).filter((e) =>
+      e.year === selectedYear &&
+      e.quarter === currentQuarter &&
+      e.staffId === staffId &&
+      e.evaluatorId === evaluatorId &&
+      checks.some((check) => check.included && check.part === e.part && check.role === e.evaluatorRole) &&
+      hasScore(e)
     )
 
-  const part2Exists = (staffId) =>
-    (data.quarterlyEvaluations || []).some(
-      (e) => e.year === selectedYear && e.quarter === currentQuarter && e.staffId === staffId && e.part === 'part2'
-    )
+  const buildEvaluatorStatus = (staffId, evaluatorId, checks) => {
+    const rows = getEvaluatorScoreRows(staffId, evaluatorId, checks)
+    const requiredChecks = checks.filter((check) => check.included)
+    const partLabels = checks
+      .filter((check) => rows.some((row) => row.part === check.part && row.evaluatorRole === check.role))
+      .map((check) => check.label)
+    return {
+      done: requiredChecks.length > 0 && requiredChecks.every((check) =>
+        rows.some((row) => row.part === check.part && row.evaluatorRole === check.role)
+      ),
+      requiredPartLabels: requiredChecks.map((check) => check.label),
+      partLabels,
+    }
+  }
 
   const isSelfDone = (staffId) => {
-    return !!(
-      part2Exists(staffId) &&
-      findEval(staffId, staffId, 'part1', 'Staff') &&
-      findEval(staffId, staffId, 'part3_staff', 'Staff') &&
-      findEval(staffId, staffId, 'part4', 'Staff')
-    )
+    return buildEvaluatorStatus(staffId, staffId, [
+      { included: includedParts.part1, part: 'part1', role: 'Staff', label: 'P1' },
+      { included: includedParts.part3, part: 'part3_staff', role: 'Staff', label: 'P3' },
+      { included: includedParts.part4, part: 'part4', role: 'Staff', label: 'P4' },
+    ])
   }
 
   const isSupervisorDone = (staffId, supervisorId) => {
-    if (!supervisorId) return false
-    return !!(
-      part2Exists(staffId) &&
-      findEval(staffId, supervisorId, 'part1', 'Supervisor') &&
-      findEval(staffId, supervisorId, 'part3_sup', 'Supervisor') &&
-      findEval(staffId, supervisorId, 'part4', 'Supervisor')
-    )
+    if (!supervisorId) return { done: false, partLabels: [] }
+    return buildEvaluatorStatus(staffId, supervisorId, [
+      { included: includedParts.part1, part: 'part1', role: 'Supervisor', label: 'P1' },
+      { included: includedParts.part3, part: 'part3_sup', role: 'Supervisor', label: 'P3' },
+      { included: includedParts.part4, part: 'part4', role: 'Supervisor', label: 'P4' },
+    ])
   }
 
   const isStakeholderDone = (staffId, stakeholderId) => {
-    if (!stakeholderId) return false
-    return !!(
-      part2Exists(staffId) &&
-      findEval(staffId, stakeholderId, 'part1', 'Stakeholder') &&
-      findEval(staffId, stakeholderId, 'part4', 'Stakeholder')
-    )
+    if (!stakeholderId) return { done: false, partLabels: [] }
+    return buildEvaluatorStatus(staffId, stakeholderId, [
+      { included: includedParts.part1, part: 'part1', role: 'Stakeholder', label: 'P1' },
+      { included: includedParts.part4, part: 'part4', role: 'Stakeholder', label: 'P4' },
+    ])
   }
 
   // Build evaluation matrix: for each user, show who they need to evaluate
@@ -112,9 +141,12 @@ export default function StatusEvaluation() {
       .filter((c) => c.supervisorId === user.id)
       .map((c) => {
         const staff = allUsers.find((u) => u.id === c.staffId)
+        const status = isSupervisorDone(c.staffId, user.id)
         return staff ? {
           staff,
-          done: isSupervisorDone(c.staffId, user.id)
+          done: status.done,
+          partLabels: status.partLabels,
+          requiredPartLabels: status.requiredPartLabels,
         } : null
       })
       .filter(Boolean)
@@ -124,20 +156,26 @@ export default function StatusEvaluation() {
       .filter((c) => (c.stakeholderIds || []).includes(user.id))
       .map((c) => {
         const staff = allUsers.find((u) => u.id === c.staffId)
+        const status = isStakeholderDone(c.staffId, user.id)
         return staff ? {
           staff,
-          done: isStakeholderDone(c.staffId, user.id)
+          done: status.done,
+          partLabels: status.partLabels,
+          requiredPartLabels: status.requiredPartLabels,
         } : null
       })
       .filter(Boolean)
 
     // Check if user needs to do self-evaluation
     const hasSelfEval = !!userConfig
-    const selfDone = hasSelfEval ? isSelfDone(user.id) : null
+    const selfStatus = hasSelfEval ? isSelfDone(user.id) : { done: null, partLabels: [] }
+    const selfDone = selfStatus.done
 
     return {
       user,
       selfDone,
+      selfPartLabels: selfStatus.partLabels,
+      selfRequiredPartLabels: selfStatus.requiredPartLabels,
       supervisedStaff,
       stakeholderFor,
       hasSelfEval,
@@ -229,6 +267,7 @@ export default function StatusEvaluation() {
                           <span className={`text-xs font-medium ${item.selfDone ? 'text-green-700' : 'text-red-600'}`}>
                             {item.user.name}
                           </span>
+                          <PartEvidence parts={item.selfPartLabels} requiredParts={item.selfRequiredPartLabels} />
                         </div>
                       ) : (
                         <span className="text-xs text-gray-400 flex justify-center">—</span>
@@ -247,6 +286,7 @@ export default function StatusEvaluation() {
                               <span className={`text-xs font-medium ${s.done ? 'text-green-700' : 'text-red-600'}`}>
                                 {s.staff.name}
                               </span>
+                              <PartEvidence parts={s.partLabels} requiredParts={s.requiredPartLabels} />
                             </div>
                           ))}
                         </div>
@@ -267,6 +307,7 @@ export default function StatusEvaluation() {
                               <span className={`text-xs font-medium ${s.done ? 'text-green-700' : 'text-red-600'}`}>
                                 {s.staff.name}
                               </span>
+                              <PartEvidence parts={s.partLabels} requiredParts={s.requiredPartLabels} />
                             </div>
                           ))}
                         </div>

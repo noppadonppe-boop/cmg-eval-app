@@ -57,6 +57,11 @@ function normalizeFirebaseUser(u) {
   return { ...u, id: u.uid || u.id, name, role }
 }
 
+function getDisplayName(user) {
+  if (!user) return 'ไม่ทราบชื่อ'
+  return [user.firstName, user.lastName].filter(Boolean).join(' ') || user.name || user.email || 'User'
+}
+
 function useEvalAccess() {
   const { data, currentUser, selectedYear } = useApp()
   const { role } = useRBAC()
@@ -213,28 +218,138 @@ export default function EvalPage() {
     if (evaluatorId != null) {
       return rows.some((e) => e.evaluatorId === evaluatorId && (evaluatorRole ? e.evaluatorRole === evaluatorRole : true))
     }
+    if (evaluatorRole) {
+      return rows.some((e) => e.evaluatorRole === evaluatorRole)
+    }
     return rows.length > 0
+  }
+
+  const hasScoredPartEvaluation = (staffId, part, evaluatorId = null, evaluatorRole = null) => {
+    const rows = (data.quarterlyEvaluations || []).filter(
+      (e) =>
+        e.staffId === staffId &&
+        e.year === selectedYear &&
+        e.quarter === quarter &&
+        e.part === part &&
+        (evaluatorId != null ? e.evaluatorId === evaluatorId : true) &&
+        (evaluatorRole ? e.evaluatorRole === evaluatorRole : true)
+    )
+    return rows.some((e) => e.rawTotal != null || e.scaledScore != null || e.score != null)
+  }
+
+  const getUniqueStakeholderIds = (staffId) => {
+    const cfg = (yearConfigs || []).find((c) => c.staffId === staffId)
+    return [...new Set((cfg?.stakeholderIds || []).filter(Boolean))]
+  }
+
+  const getSupervisorId = (staffId) => {
+    const cfg = (yearConfigs || []).find((c) => c.staffId === staffId)
+    return cfg?.supervisorId || null
+  }
+
+  const hasAllEvaluatorParts = (staffId, part, evaluatorIds, evaluatorRole) =>
+    evaluatorIds.every((evaluatorId) => hasPartEvaluation(staffId, part, evaluatorId, evaluatorRole))
+
+  const getSummaryMissingEvaluators = (staffId) => {
+    const missing = []
+    const includedParts = getQuarterScores(data, staffId, selectedYear, quarter)?.includedParts || {}
+    const cfg = (yearConfigs || []).find((c) => c.staffId === staffId)
+    const supervisor = cfg?.supervisorId ? allUsers.find((u) => u.id === cfg.supervisorId) : null
+    const stakeholderIds = getUniqueStakeholderIds(staffId)
+    const stakeholders = stakeholderIds.map((id) => allUsers.find((u) => u.id === id)).filter(Boolean)
+
+    const staffHasAnySelfEvaluation =
+      (includedParts.part1 && hasScoredPartEvaluation(staffId, 'part1', null, 'Staff')) ||
+      (includedParts.part3 && hasScoredPartEvaluation(staffId, 'part3_staff', null, 'Staff')) ||
+      (includedParts.part4 && hasScoredPartEvaluation(staffId, 'part4', null, 'Staff'))
+    const staffMissing =
+      (includedParts.part1 && !hasScoredPartEvaluation(staffId, 'part1', null, 'Staff')) ||
+      (includedParts.part3 && !hasScoredPartEvaluation(staffId, 'part3_staff', null, 'Staff')) ||
+      (includedParts.part4 && !hasScoredPartEvaluation(staffId, 'part4', null, 'Staff'))
+    if (staffMissing && !staffHasAnySelfEvaluation) {
+      const staff = allUsers.find((u) => u.id === staffId)
+      missing.push(getDisplayName(staff))
+    }
+
+    if (!supervisor) {
+      missing.push('Supervisor')
+    } else {
+      const supervisorMissing =
+        (includedParts.part1 && !hasScoredPartEvaluation(staffId, 'part1', supervisor.id, 'Supervisor')) ||
+        (includedParts.part3 && !hasScoredPartEvaluation(staffId, 'part3_sup', supervisor.id, 'Supervisor')) ||
+        (includedParts.part4 && !hasScoredPartEvaluation(staffId, 'part4', supervisor.id, 'Supervisor'))
+      if (supervisorMissing) missing.push(getDisplayName(supervisor))
+    }
+
+    if (includedParts.part2 && !hasPartEvaluation(staffId, 'part2')) {
+      missing.push('HR (Part 2)')
+    }
+
+    stakeholders.forEach((stakeholder) => {
+      const stakeholderMissing =
+        (includedParts.part1 && !hasScoredPartEvaluation(staffId, 'part1', stakeholder.id, 'Stakeholder')) ||
+        (includedParts.part4 && !hasScoredPartEvaluation(staffId, 'part4', stakeholder.id, 'Stakeholder'))
+      if (stakeholderMissing) missing.push(getDisplayName(stakeholder))
+    })
+
+    if (stakeholderIds.length < 3) {
+      missing.push(`Stakeholder ยังไม่ครบ ${stakeholderIds.length}/3`)
+    }
+
+    if (missing.length === 0) return ''
+    const visible = missing.slice(0, 3).join(', ')
+    const more = missing.length > 3 ? ` +${missing.length - 3}` : ''
+    return `ขาด: ${visible}${more}`
   }
 
   const getCardStatus = (staffId, contextMode, evaluatorContext = null) => {
     const isSummaryContext = contextMode === 'summary'
     
-    // For summary or all-staff access, check if all 4 parts have evaluations
+    // Summary cards count a part as complete only when every required evaluator has submitted it.
     if (isSummaryContext || (hasAllStaffAccess && !isSupervisor && !isStakeholder && !isAssignedAsStaff)) {
-      const part1Done = (data.quarterlyEvaluations || []).some(
-        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === 'part1'
+      const includedParts = getQuarterScores(data, staffId, selectedYear, quarter)?.includedParts || {}
+      const supervisorId = getSupervisorId(staffId)
+      const stakeholderIds = getUniqueStakeholderIds(staffId)
+      const allStakeholdersAssigned = stakeholderIds.length === 3
+      const part1Done = !!(
+        hasPartEvaluation(staffId, 'part1', null, 'Staff') &&
+        supervisorId &&
+        hasPartEvaluation(staffId, 'part1', supervisorId, 'Supervisor') &&
+        allStakeholdersAssigned &&
+        hasAllEvaluatorParts(staffId, 'part1', stakeholderIds, 'Stakeholder')
       )
-      const part2Done = (data.quarterlyEvaluations || []).some(
-        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === 'part2'
+      const part2Done = hasPartEvaluation(staffId, 'part2')
+      const part3Done = !!(
+        hasPartEvaluation(staffId, 'part3_staff', null, 'Staff') &&
+        supervisorId &&
+        hasPartEvaluation(staffId, 'part3_sup', supervisorId, 'Supervisor')
       )
-      const part3Done = (data.quarterlyEvaluations || []).some(
-        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && (e.part === 'part3_staff' || e.part === 'part3_sup')
+      const part4Done = !!(
+        hasPartEvaluation(staffId, 'part4', null, 'Staff') &&
+        supervisorId &&
+        hasPartEvaluation(staffId, 'part4', supervisorId, 'Supervisor') &&
+        allStakeholdersAssigned &&
+        hasAllEvaluatorParts(staffId, 'part4', stakeholderIds, 'Stakeholder')
       )
-      const part4Done = (data.quarterlyEvaluations || []).some(
-        (e) => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === 'part4'
-      )
-      const allDone = part1Done && part2Done && part3Done && part4Done
-      return { label: allDone ? 'ประเมินครบแล้ว (4/4)' : 'ยังไม่ประเมินครบ', tone: allDone ? 'done' : 'todo' }
+      const checks = [
+        { key: 'part1', shortLabel: 'P1', label: 'Part 1 - Competency', included: includedParts.part1, done: part1Done },
+        { key: 'part2', shortLabel: 'P2', label: 'Part 2 - Discipline', included: includedParts.part2, done: part2Done },
+        { key: 'part3', shortLabel: 'P3', label: 'Part 3 - KPI', included: includedParts.part3, done: part3Done },
+        { key: 'part4', shortLabel: 'P4', label: 'Part 4 - Job Description', included: includedParts.part4, done: part4Done },
+      ].filter((p) => p.included)
+      const completedChecks = checks.filter((p) => p.done).length
+      const totalChecks = checks.length
+      const allDone = totalChecks > 0 && completedChecks === totalChecks
+      return {
+        label: allDone ? `ประเมินครบแล้ว (${completedChecks}/${totalChecks})` : `ประเมินแล้ว (${completedChecks}/${totalChecks})`,
+        statusParts: [
+          { key: 'part1', shortLabel: 'P1', label: 'Part 1 - Competency', included: includedParts.part1, done: part1Done },
+          { key: 'part2', shortLabel: 'P2', label: 'Part 2 - Discipline', included: includedParts.part2, done: part2Done },
+          { key: 'part3', shortLabel: 'P3', label: 'Part 3 - KPI', included: includedParts.part3, done: part3Done },
+          { key: 'part4', shortLabel: 'P4', label: 'Part 4 - Job Description', included: includedParts.part4, done: part4Done },
+        ],
+        tone: allDone ? 'done' : 'todo',
+      }
     }
 
     const ctxRole = evaluatorContext === 'stakeholder'
@@ -243,14 +358,18 @@ export default function EvalPage() {
         ? 'Supervisor'
         : getEvaluatorRole(staffId)
 
-    const part1Done = hasPartEvaluation(staffId, 'part1', currentUser.id, ctxRole)
+    const part1Done = ctxRole === 'Staff'
+      ? hasPartEvaluation(staffId, 'part1', null, 'Staff')
+      : hasPartEvaluation(staffId, 'part1', currentUser.id, ctxRole)
     const part2Done = hasPartEvaluation(staffId, 'part2')
     const part3Done = evaluatorContext === 'stakeholder'
       ? true
       : (ctxRole === 'Staff'
-        ? hasPartEvaluation(staffId, 'part3_staff', staffId, 'Staff')
+        ? hasPartEvaluation(staffId, 'part3_staff', null, 'Staff')
         : hasPartEvaluation(staffId, 'part3_sup', currentUser.id, 'Supervisor'))
-    const part4Done = hasPartEvaluation(staffId, 'part4', currentUser.id, ctxRole)
+    const part4Done = ctxRole === 'Staff'
+      ? hasPartEvaluation(staffId, 'part4', null, 'Staff')
+      : hasPartEvaluation(staffId, 'part4', currentUser.id, ctxRole)
 
     const completedChecks = [part1Done, part2Done, part3Done, part4Done].filter(Boolean).length
     const totalChecks = 4
@@ -416,7 +535,8 @@ export default function EvalPage() {
                   const listWithScores = allStaffList.map((u) => {
                     const s = getCardStatus(u.id, 'summary')
                     const scores = getQuarterScores(data, u.id, selectedYear, quarter)
-                    return { u, s, total: scores?.total ?? null }
+                    const missingDetail = role === 'MasterAdmin' ? getSummaryMissingEvaluators(u.id) : ''
+                    return { u, s, total: scores?.total ?? null, missingDetail }
                   })
 
                   listWithScores.sort((a, b) => {
@@ -425,13 +545,15 @@ export default function EvalPage() {
                     return scoreB - scoreA
                   })
 
-                  return listWithScores.map(({ u, s, total }) => (
+                  return listWithScores.map(({ u, s, total, missingDetail }) => (
                     <StaffMiniCard
                       key={u.id}
                       user={u}
                       isSelected={false}
                       statusLabel={s.label}
+                      statusDetail={missingDetail}
                       statusTone={s.tone}
+                      statusParts={s.statusParts}
                       isSummaryCard={true}
                       summaryScore={total}
                       onClick={() => handleCardClick(u.id, 'summary')}
@@ -532,9 +654,9 @@ export default function EvalPage() {
 
             {(() => {
               const s = getQuarterScores(data, effectiveStaffId, selectedYear, quarter)
-              const row = (label, val, max, cls) => (
-                <div className="flex items-center justify-between py-2.5">
-                  <span className="text-sm font-semibold text-gray-700">{label}</span>
+              const row = (label, val, max, cls, included = cls === 'text-indigo-600' ? s?.includedParts?.part1 : cls === 'text-green-600' ? s?.includedParts?.part2 : cls === 'text-blue-600' ? s?.includedParts?.part3 : cls === 'text-purple-600' ? s?.includedParts?.part4 : true) => (
+                <div className={`flex items-center justify-between py-2.5 ${included ? '' : 'opacity-60 [&>span]:text-gray-400 [&>span]:line-through'}`}>
+                  <span className={`text-sm font-semibold ${included ? 'text-gray-700' : 'text-gray-400 line-through'}`}>{label}</span>
                   <span className={`text-sm font-bold ${cls}`}>{val ?? '—'}{val != null ? ` / ${max}` : ''}</span>
                 </div>
               )

@@ -206,7 +206,20 @@ export default function DashboardPage() {
     { label: 'Active Years',     value: data.evaluationYears.length, icon: <TrendingUp size={20} className="text-orange-600" />, bg: 'bg-orange-50' },
   ]
 
-  const findEval = (staffId, evaluatorId, part, evaluatorRole = null) =>
+  const hasScore = (e) =>
+    e && (e.rawTotal != null || e.scaledScore != null || e.score != null)
+
+  const findStaffSelfEval = (staffId, part) =>
+    (data.quarterlyEvaluations || []).find(
+      (e) =>
+        e.year === selectedYear &&
+        e.quarter === currentQuarter &&
+        e.staffId === staffId &&
+        e.part === part &&
+        e.evaluatorRole === 'Staff'
+    )
+
+  const findEvaluatorEval = (staffId, evaluatorId, part, evaluatorRole) =>
     (data.quarterlyEvaluations || []).find(
       (e) =>
         e.year === selectedYear &&
@@ -214,41 +227,20 @@ export default function DashboardPage() {
         e.staffId === staffId &&
         e.evaluatorId === evaluatorId &&
         e.part === part &&
-        (evaluatorRole ? e.evaluatorRole === evaluatorRole : true)
-    )
-
-  const part2Exists = (staffId) =>
-    (data.quarterlyEvaluations || []).some(
-      (e) => e.year === selectedYear && e.quarter === currentQuarter && e.staffId === staffId && e.part === 'part2'
+        e.evaluatorRole === evaluatorRole
     )
 
   const isSelfDone = (staffId) =>
-    !!(
-      part2Exists(staffId) &&
-      findEval(staffId, staffId, 'part1', 'Staff') &&
-      findEval(staffId, staffId, 'part3_staff', 'Staff') &&
-      findEval(staffId, staffId, 'part4', 'Staff')
-    )
+    hasScore(findStaffSelfEval(staffId, 'part1'))
 
   const isSupervisorDone = (staffId, supervisorId) => {
     if (!supervisorId) return false
-    return !!(
-      part2Exists(staffId) &&
-      findEval(staffId, supervisorId, 'part1', 'Supervisor') &&
-      findEval(staffId, supervisorId, 'part3_sup', 'Supervisor') &&
-      findEval(staffId, supervisorId, 'part4', 'Supervisor')
-    )
+    return hasScore(findEvaluatorEval(staffId, supervisorId, 'part1', 'Supervisor'))
   }
 
   const isStakeholderDone = (staffId, stakeholderId) => {
     if (!stakeholderId) return false
-    // Match EvalPage "ประเมินครบแล้ว" logic for stakeholder context:
-    // Part1 + Part4 by stakeholder + Part2 exists (Part3 counts as pre-filled for stakeholder)
-    return !!(
-      part2Exists(staffId) &&
-      findEval(staffId, stakeholderId, 'part1', 'Stakeholder') &&
-      findEval(staffId, stakeholderId, 'part4', 'Stakeholder')
-    )
+    return hasScore(findEvaluatorEval(staffId, stakeholderId, 'part1', 'Stakeholder'))
   }
 
   const myConfig = (data.staffConfigs || []).find((c) => c.year === selectedYear && c.staffId === currentUser.id) || null

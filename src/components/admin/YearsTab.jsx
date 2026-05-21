@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useApp } from '../../context/AppContext'
-import { PlusCircle, CalendarDays, Copy, CheckCircle2, AlertCircle } from 'lucide-react'
+import { PlusCircle, CalendarDays, Copy, CheckCircle2, AlertCircle, Calculator } from 'lucide-react'
+import { getYearScorePartUsage, PART_LABELS, PART_MAX } from '../../utils/scoreUtils'
 
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4']
+const SCORE_PARTS = ['part1', 'part2', 'part3', 'part4']
 
 export default function YearsTab() {
-  const { data, addYear, selectedYear, setSelectedYear, activeQuarter, setActiveQuarter } = useApp()
+  const { data, updateData, addYear, selectedYear, setSelectedYear, activeQuarter, setActiveQuarter } = useApp()
   const [input, setInput] = useState('')
   const [toast, setToast] = useState(null)
 
@@ -31,6 +33,23 @@ export default function YearsTab() {
     setActiveQuarter('Q1')
     setInput('')
     showToast(`Year ${yr} created. ${cloneCount} staff config(s) cloned from ${lastYear}.`)
+  }
+
+  const toggleScorePart = (year, partKey) => {
+    updateData((prev) => {
+      if (!prev) return prev
+      const current = getYearScorePartUsage(prev, year)
+      return {
+        ...prev,
+        scorePartSettings: {
+          ...(prev.scorePartSettings ?? {}),
+          [year]: {
+            ...current,
+            [partKey]: !current[partKey],
+          },
+        },
+      }
+    })
   }
 
   return (
@@ -131,6 +150,38 @@ export default function YearsTab() {
                         <span className="text-[11px] font-semibold px-2 py-1 bg-indigo-100 text-indigo-700 rounded-full">Active: {activeQuarter}</span>
                       )}
                     </div>
+                    {isSelected && (
+                      <div className="mt-3 rounded-lg border border-indigo-100 bg-white p-3">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-gray-700 mb-2">
+                          <Calculator size={13} className="text-indigo-500" />
+                          Score parts included in total /100
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {SCORE_PARTS.map((partKey) => {
+                            const usage = getYearScorePartUsage(data, yr)
+                            const checked = usage[partKey]
+                            return (
+                              <label
+                                key={partKey}
+                                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer transition-colors ${
+                                  checked
+                                    ? 'bg-indigo-50 border-indigo-200 text-indigo-800'
+                                    : 'bg-gray-50 border-gray-200 text-gray-500'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleScorePart(yr, partKey)}
+                                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                                <span>{PART_LABELS[partKey]} <span className="text-gray-400">({PART_MAX[partKey]} pts)</span></span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

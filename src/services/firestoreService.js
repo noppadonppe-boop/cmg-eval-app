@@ -17,6 +17,7 @@ const DEFAULT_DATA = {
   staffConfigs: [],
   kpis: [],
   quarterlyEvaluations: [],
+  scorePartSettings: {},
 }
 
 function toWritePayload(data) {
@@ -30,6 +31,8 @@ function toWritePayload(data) {
     staffConfigs: data.staffConfigs ?? [],
     kpis: data.kpis ?? [],
     quarterlyEvaluations: data.quarterlyEvaluations ?? [],
+    scorePartSettings: data.scorePartSettings ?? {},
+    competencyConfig: data.competencyConfig ?? null,
   }
 }
 
@@ -46,6 +49,8 @@ export function parseSnapshot(snap) {
     staffConfigs: Array.isArray(d.staffConfigs) ? d.staffConfigs : DEFAULT_DATA.staffConfigs,
     kpis: Array.isArray(d.kpis) ? d.kpis : DEFAULT_DATA.kpis,
     quarterlyEvaluations: Array.isArray(d.quarterlyEvaluations) ? d.quarterlyEvaluations : DEFAULT_DATA.quarterlyEvaluations,
+    scorePartSettings: d.scorePartSettings && typeof d.scorePartSettings === 'object' ? d.scorePartSettings : DEFAULT_DATA.scorePartSettings,
+    competencyConfig: d.competencyConfig && typeof d.competencyConfig === 'object' ? d.competencyConfig : null,
   }
 }
 

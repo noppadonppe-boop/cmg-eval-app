@@ -141,7 +141,7 @@ export default function Part5Quarterly() {
   const kpiPending = myKpis.filter((k) => k.status === 'Pending').length
   const kpiRejected = myKpis.filter((k) => k.status === 'Rejected').length
 
-  const hasAnyData = Object.values(scores).some((v) => v !== null)
+  const hasAnyData = [scores.part1, scores.part2, scores.part3, scores.part4, scores.total].some((v) => v !== null)
 
   return (
     <div className="space-y-6">

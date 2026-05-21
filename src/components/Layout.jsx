@@ -128,18 +128,19 @@ export default function Layout() {
         e => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === part
       )
     }
+
+    const hasStaffPart1Score = (staffId) =>
+      data?.quarterlyEvaluations?.some(
+        e => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === 'part1' && e.evaluatorRole === 'Staff'
+          && (e.rawTotal != null || e.scaledScore != null || e.score != null)
+      )
     
-    // Self evaluation check - count as 1 card if any part incomplete (only if ready)
+    // Self evaluation is done when Part 1 Competency has a Staff score.
     if (isAssignedStaff && isStaffReady(currentUser?.id)) {
-      const hasPart1 = hasEval(currentUser?.id, 'part1')
-      const hasPart2 = hasEval(currentUser?.id, 'part2')
-      const hasPart3 = hasEval(currentUser?.id, 'part3_staff')
-      const hasPart4 = hasEval(currentUser?.id, 'part4')
-      // Count this card if any part is incomplete (status like 0/4, 1/4, 2/4, 3/4)
-      if (!hasPart1 || !hasPart2 || !hasPart3 || !hasPart4) count++
+      if (!hasStaffPart1Score(currentUser?.id)) count++
     }
     
-    // Staff I need to evaluate as Supervisor - count each card if any part incomplete (only if ready)
+    // Staff I need to evaluate as Supervisor - count only parts the supervisor submits directly.
     if (isSupervisor) {
       const myStaffIds = yearConfigs
         .filter(c => c.supervisorId === currentUser?.id)
@@ -147,11 +148,9 @@ export default function Layout() {
       myStaffIds.forEach(staffId => {
         if (!isStaffReady(staffId)) return
         const hasPart1 = hasEval(staffId, 'part1', currentUser?.id)
-        const hasPart2 = hasEval(staffId, 'part2', currentUser?.id)
         const hasPart3 = hasEval(staffId, 'part3_sup', currentUser?.id)
         const hasPart4 = hasEval(staffId, 'part4', currentUser?.id)
-        // Count this card if any part is incomplete
-        if (!hasPart1 || !hasPart2 || !hasPart3 || !hasPart4) count++
+        if (!hasPart1 || !hasPart3 || !hasPart4) count++
       })
     }
     
@@ -176,7 +175,20 @@ export default function Layout() {
     const yearConfigs = data?.staffConfigs?.filter((c) => c.year === selectedYear) || []
     const evaluations = data?.quarterlyEvaluations || []
 
-    const findEval = (staffId, evaluatorId, part, evaluatorRole = null) =>
+    const hasScore = (e) =>
+      e && (e.rawTotal != null || e.scaledScore != null || e.score != null)
+
+    const findStaffSelfEval = (staffId, part) =>
+      evaluations.find(
+        (e) =>
+          e.year === selectedYear &&
+          e.quarter === quarter &&
+          e.staffId === staffId &&
+          e.part === part &&
+          e.evaluatorRole === 'Staff'
+      )
+
+    const findEvaluatorEval = (staffId, evaluatorId, part, evaluatorRole) =>
       evaluations.find(
         (e) =>
           e.year === selectedYear &&
@@ -184,37 +196,22 @@ export default function Layout() {
           e.staffId === staffId &&
           e.evaluatorId === evaluatorId &&
           e.part === part &&
-          (evaluatorRole ? e.evaluatorRole === evaluatorRole : true)
-      )
-
-    const part2Exists = (staffId) =>
-      evaluations.some(
-        (e) => e.year === selectedYear && e.quarter === quarter && e.staffId === staffId && e.part === 'part2'
+          e.evaluatorRole === evaluatorRole
       )
 
     const isSelfDone = (staffId) =>
-      !!(
-        part2Exists(staffId) &&
-        findEval(staffId, staffId, 'part1', 'Staff') &&
-        findEval(staffId, staffId, 'part3_staff', 'Staff') &&
-        findEval(staffId, staffId, 'part4', 'Staff')
-      )
+      hasScore(findStaffSelfEval(staffId, 'part1'))
 
     const isSupervisorDone = (staffId, supervisorId) =>
       !!(
         supervisorId &&
-        part2Exists(staffId) &&
-        findEval(staffId, supervisorId, 'part1', 'Supervisor') &&
-        findEval(staffId, supervisorId, 'part3_sup', 'Supervisor') &&
-        findEval(staffId, supervisorId, 'part4', 'Supervisor')
+        hasScore(findEvaluatorEval(staffId, supervisorId, 'part1', 'Supervisor'))
       )
 
     const isStakeholderDone = (staffId, stakeholderId) =>
       !!(
         stakeholderId &&
-        part2Exists(staffId) &&
-        findEval(staffId, stakeholderId, 'part1', 'Stakeholder') &&
-        findEval(staffId, stakeholderId, 'part4', 'Stakeholder')
+        hasScore(findEvaluatorEval(staffId, stakeholderId, 'part1', 'Stakeholder'))
       )
 
     const pendingSelfCount = yearConfigs.reduce(

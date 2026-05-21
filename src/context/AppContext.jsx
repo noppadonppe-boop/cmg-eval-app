@@ -27,6 +27,7 @@ const INITIAL_DATA = {
   ],
   kpis: [],
   quarterlyEvaluations: [],
+  scorePartSettings: {},
 }
 
 /** ลำดับความสำคัญของ Role สำหรับเลือก primary role */
@@ -193,6 +194,15 @@ export function AppProvider({ children }) {
         ...prev,
         evaluationYears: [...prev.evaluationYears, newYear].sort((a, b) => a - b),
         staffConfigs: [...prev.staffConfigs, ...clonedConfigs],
+        scorePartSettings: {
+          ...(prev.scorePartSettings ?? {}),
+          [newYear]: {
+            part1: prev.scorePartSettings?.[lastYear]?.part1 !== false,
+            part2: prev.scorePartSettings?.[lastYear]?.part2 !== false,
+            part3: prev.scorePartSettings?.[lastYear]?.part3 !== false,
+            part4: prev.scorePartSettings?.[lastYear]?.part4 !== false,
+          },
+        },
       }
     })
   }

@@ -11,6 +11,12 @@ function getPart1MaxRaw(data) {
 }
 const PART1_WEIGHTS = { Staff: 0.20, Supervisor: 0.50, Stakeholder: 0.30 }
 
+function avg(values) {
+  return values.length > 0
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null
+}
+
 /**
  * Part 4 weighted formula (same weights as Part 1, scaled to 20 pts):
  * [ Staff_score×0.20 + Supervisor_score×0.50 + Stakeholder_score×0.30 ] / 20 × 20
@@ -18,11 +24,30 @@ const PART1_WEIGHTS = { Staff: 0.20, Supervisor: 0.50, Stakeholder: 0.30 }
  */
 const PART4_WEIGHTS = { Staff: 0.20, Supervisor: 0.50, Stakeholder: 0.30 }
 
+export const DEFAULT_SCORE_PART_USAGE = {
+  part1: true,
+  part2: true,
+  part3: true,
+  part4: true,
+}
+
+export function getYearScorePartUsage(data, year) {
+  const settings = data?.scorePartSettings ?? {}
+  const saved = settings[String(year)] ?? settings[year] ?? {}
+  return {
+    part1: saved.part1 !== false,
+    part2: saved.part2 !== false,
+    part3: saved.part3 !== false,
+    part4: saved.part4 !== false,
+  }
+}
+
 /**
  * Derive aggregated scores for a staff member for a specific year+quarter.
  * Returns { part1, part2, part3, part4, total } — all out of their respective max pts.
  */
 export function getQuarterScores(data, staffId, year, quarter) {
+  const includedParts = getYearScorePartUsage(data, year)
   const evals = data.quarterlyEvaluations.filter(
     (e) => e.staffId === staffId && e.year === year && e.quarter === quarter
   )
@@ -32,16 +57,31 @@ export function getQuarterScores(data, staffId, year, quarter) {
   let part1 = null
   if (p1Evals.length > 0) {
     let weightedSum = 0
-    let totalWeight = 0
+    const rawByRole = {
+      Staff: [],
+      Supervisor: [],
+      HR: [],
+      Stakeholder: [],
+    }
     p1Evals.forEach((e) => {
-      const w = PART1_WEIGHTS[e.evaluatorRole] ?? 0
-      if (w > 0 && e.rawTotal != null) {
-        weightedSum += e.rawTotal * w
-        totalWeight += w
+      if (e.rawTotal == null || !rawByRole[e.evaluatorRole]) return
+      rawByRole[e.evaluatorRole].push(e.rawTotal)
+    })
+
+    const roleScores = {
+      Staff: avg(rawByRole.Staff),
+      Supervisor: avg(rawByRole.Supervisor) ?? avg(rawByRole.HR),
+      Stakeholder: avg(rawByRole.Stakeholder),
+    }
+    let hasWeightedPart = false
+    Object.entries(PART1_WEIGHTS).forEach(([role, weight]) => {
+      if (roleScores[role] != null) {
+        hasWeightedPart = true
+        weightedSum += roleScores[role] * weight
       }
     })
-    if (totalWeight > 0) {
-      part1 = Math.round((weightedSum / getPart1MaxRaw(data)) * 30 * 100) / 100
+    if (hasWeightedPart) {
+      part1 = Math.round(Math.min((weightedSum / getPart1MaxRaw(data)) * 30, 30) * 100) / 100
     }
   }
 
@@ -84,14 +124,21 @@ export function getQuarterScores(data, staffId, year, quarter) {
     }
   }
 
-  const scores = [part1, part2, part3, part4]
-  const filled = scores.filter((s) => s !== null)
+  const scores = [
+    { key: 'part1', value: part1 },
+    { key: 'part2', value: part2 },
+    { key: 'part3', value: part3 },
+    { key: 'part4', value: part4 },
+  ]
+  const filled = scores
+    .filter((s) => includedParts[s.key] && s.value !== null)
+    .map((s) => s.value)
   const total =
     filled.length > 0
-      ? Math.round(filled.reduce((s, v) => s + v, 0) * 10) / 10
+      ? Math.round(filled.reduce((s, v) => s + v, 0) * 100) / 100
       : null
 
-  return { part1, part2, part3, part4, total }
+  return { part1, part2, part3, part4, total, includedParts }
 }
 
 /**
@@ -109,7 +156,7 @@ export function getAnnualScores(data, staffId, year) {
   const avg = (key) => {
     const vals = quarterData.map((q) => q[key]).filter((v) => v !== null)
     return vals.length > 0
-      ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 10) / 10
+      ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 100) / 100
       : null
   }
 

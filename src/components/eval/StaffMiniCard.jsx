@@ -68,7 +68,7 @@ function UserAvatar({ user, size = 'md' }) {
   )
 }
 
-export default function StaffMiniCard({ user, isSelected = false, onClick, statusLabel, statusDetail, statusTone = 'todo', isSummaryCard = false, summaryScore = null, contextRole = null }) {
+export default function StaffMiniCard({ user, isSelected = false, onClick, statusLabel, statusDetail, statusTone = 'todo', statusParts = null, isSummaryCard = false, summaryScore = null, contextRole = null }) {
   const displayName = getUserDisplayName(user)
   const role = getPrimaryRole(user)
   const position = contextRole || getPositionLabel(user) // Use contextRole if provided
@@ -121,7 +121,26 @@ export default function StaffMiniCard({ user, isSelected = false, onClick, statu
           <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold ring-1 ${badgeClass}`}>
             {position}
           </span>
-          {statusLabel && (
+          {statusParts?.length > 0 ? (
+            <div className="flex items-center justify-center gap-1 flex-wrap">
+              {statusParts.map((part) => (
+                <span
+                  key={part.key}
+                  className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold ring-1 ${
+                    !part.included
+                      ? 'bg-gray-50 text-gray-300 ring-gray-200 line-through'
+                      : part.done
+                        ? 'bg-green-50 text-green-700 ring-green-200'
+                        : 'bg-red-50 text-red-600 ring-red-200'
+                  }`}
+                  title={`${part.label}: ${!part.included ? 'Not used' : part.done ? 'Done' : 'Missing'}`}
+                >
+                  <span>{part.shortLabel}</span>
+                  <span>{!part.included ? '-' : part.done ? '✓' : '×'}</span>
+                </span>
+              ))}
+            </div>
+          ) : statusLabel && (
             <span
               className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold ring-1 ${
                 statusTone === 'done'
