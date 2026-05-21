@@ -671,7 +671,10 @@ export default function EvalPage() {
             })()}
 
             {(() => {
-              const evals = (data.quarterlyEvaluations || []).filter(
+              const evals = (data.quarterlyEvaluations || []).map((e, index) => ({
+                ...e,
+                quarterlyEvaluationIndex: index,
+              })).filter(
                 (e) => e.staffId === effectiveStaffId && e.year === selectedYear && e.quarter === quarter
               )
               if (evals.length === 0) {
@@ -681,6 +684,27 @@ export default function EvalPage() {
               const part2 = evals.filter((e) => e.part === 'part2')
               const part3 = evals.filter((e) => e.part === 'part3_staff' || e.part === 'part3_sup')
               const part4 = evals.filter((e) => e.part === 'part4')
+              const competencyItems = Array.isArray(data?.competencyConfig?.items) && data.competencyConfig.items.length > 0
+                ? data.competencyConfig.items
+                : COMPETENCY_LIST
+              const competencyTitleByKey = Object.fromEntries(competencyItems.map((item) => [item.key, item.title || item.label || item.key]))
+              const getEvaluationComments = (e) => {
+                const comments = []
+                if (e.comment?.trim()) comments.push({ label: '', text: e.comment.trim() })
+                if (e.hrmRemark?.trim()) comments.push({ label: 'HRM Remark', text: e.hrmRemark.trim() })
+                if (e.scores && typeof e.scores === 'object') {
+                  Object.entries(e.scores).forEach(([key, value]) => {
+                    const comment = value?.comment?.trim()
+                    if (comment) {
+                      comments.push({
+                        label: competencyTitleByKey[key] || key,
+                        text: comment,
+                      })
+                    }
+                  })
+                }
+                return comments
+              }
               const section = (title, items) => (
                 <div className="mt-6">
                   <p className="text-sm font-bold text-gray-800 mb-3">{title}</p>
@@ -691,10 +715,25 @@ export default function EvalPage() {
                       {items.map((e) => (
                         <div key={e.id || `${e.part}_${e.evaluatorRole}_${e.evaluatorId}`} className="px-4 py-3 rounded-xl border border-gray-200 bg-white shadow-sm">
                           <div className="flex items-center justify-between gap-3 mb-1">
-                            <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">ผู้ประเมิน: {e.evaluatorRole || '—'}</span>
-                            <span className="text-sm font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{e.scaledScore ?? e.rawTotal ?? e.score ?? '—'}</span>
+                            <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">
+                              <span className="text-indigo-500" title="index ใน quarterlyEvaluations">#{e.quarterlyEvaluationIndex}</span>
+                              <span className="mx-1 text-gray-300">·</span>
+                              ผู้ประเมิน: {e.evaluatorRole || '—'}
+                            </span>
+                            <span className="inline-flex items-center gap-1.5 text-sm font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                              <span>{e.scaledScore ?? e.rawTotal ?? e.score ?? '—'}</span>
+                            </span>
                           </div>
-                          {e.comment && <p className="text-sm text-gray-700 bg-gray-50 p-2 rounded-lg mt-2 font-medium">"{e.comment}"</p>}
+                          {getEvaluationComments(e).length > 0 && (
+                            <div className="mt-2 space-y-1.5">
+                              {getEvaluationComments(e).map((comment, idx) => (
+                                <div key={`${e.id || e.part}_${idx}`} className="text-xs text-gray-700 bg-gray-50 p-2 rounded-lg font-medium text-left">
+                                  {comment.label && <span className="text-gray-500 font-bold">{comment.label}: </span>}
+                                  <span>"{comment.text}"</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
