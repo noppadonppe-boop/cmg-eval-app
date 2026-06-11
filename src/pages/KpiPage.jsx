@@ -4,7 +4,8 @@ import useRBAC, { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../hooks/useRBAC'
 import { subscribeAllUsers } from '../services/authService'
 import {
   Target, PlusCircle, CheckCircle2, XCircle, Clock, Pencil, Trash2,
-  AlertCircle, Check, X, Filter, Eye, Info, Users, UserCircle2
+  AlertCircle, Check, X, Filter, Eye, Info, Users, UserCircle2,
+  ChevronDown, ChevronUp
 } from 'lucide-react'
 
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4']
@@ -748,13 +749,21 @@ function OverviewView({ allUsers }) {
   const { data, selectedYear, getEvaluation } = useApp()
   const [filterStaff, setFilterStaff] = useState('all')
   const [filterQuarter, setFilterQuarter] = useState('Q1')
+  const [expandedStaffIds, setExpandedStaffIds] = useState(new Set())
 
   const yearKpis = data.kpis.filter((k) => k.year === selectedYear)
-  const staffWithKpis = [...new Set(yearKpis.map((k) => k.staffId))]
-    .map((id) => allUsers.find((u) => u.id === id)).filter(Boolean)
   const getUserById = (id) => allUsers.find((u) => u.id === id)
 
-  const filteredStaff = filterStaff === 'all' ? staffWithKpis : staffWithKpis.filter(s => s.id === filterStaff)
+  const filteredStaff = filterStaff === 'all' ? allUsers : allUsers.filter(s => s.id === filterStaff)
+
+  const toggleStaffExpand = (staffId) => {
+    setExpandedStaffIds(prev => {
+      const next = new Set(prev)
+      if (next.has(staffId)) next.delete(staffId)
+      else next.add(staffId)
+      return next
+    })
+  }
 
   return (
     <div className="space-y-5">
@@ -763,8 +772,8 @@ function OverviewView({ allUsers }) {
         <div className="flex items-center gap-1.5 text-xs text-gray-500"><Filter size={13} /><span className="font-medium">กรอง:</span></div>
         <select value={filterStaff} onChange={(e) => setFilterStaff(e.target.value)}
           className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-          <option value="all">พนักงานทั้งหมด</option>
-          {staffWithKpis.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          <option value="all">ทุกคน</option>
+          {allUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
         </select>
         <div className="flex gap-1.5">
           {QUARTERS.map((q) => (
@@ -804,9 +813,14 @@ function OverviewView({ allUsers }) {
           weightedScore = Math.round(supTotal * 0.60 * 100) / 100
         }
 
+        const isStaffExpanded = expandedStaffIds.has(staff.id) || filterStaff !== 'all'
+
         return (
           <div key={staff.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-gray-100">
+            <div
+              className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer hover:bg-gray-100 transition-colors"
+              onClick={() => toggleStaffExpand(staff.id)}
+            >
               <div className="flex items-center gap-2.5">
                 <Avatar user={staff} />
                 <div>
@@ -817,49 +831,60 @@ function OverviewView({ allUsers }) {
                   </p>
                 </div>
               </div>
-              {weightedScore !== null && (
-                <div className="text-right">
-                  <p className="text-[10px] text-gray-400">คะแนน Part 3</p>
-                  <p className={`text-xl font-extrabold ${weightedScore >= 24 ? 'text-green-600' : weightedScore >= 18 ? 'text-yellow-600' : 'text-red-500'}`}>
-                    {weightedScore} <span className="text-xs text-gray-400 font-medium">/ 30</span>
-                  </p>
-                </div>
-              )}
+              <div className="flex items-center gap-4 text-right">
+                {weightedScore !== null && (
+                  <div>
+                    <p className="text-[10px] text-gray-400">คะแนน Part 3</p>
+                    <p className={`text-xl font-extrabold ${weightedScore >= 24 ? 'text-green-600' : weightedScore >= 18 ? 'text-yellow-600' : 'text-red-500'}`}>
+                      {weightedScore} <span className="text-xs text-gray-400 font-medium">/ 30</span>
+                    </p>
+                  </div>
+                )}
+                {isStaffExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
+              </div>
             </div>
 
-            {staffKpis.length === 0 ? (
-              <div className="px-5 py-6 text-center text-xs text-gray-400">ไม่มี KPI ใน {filterQuarter}</div>
-            ) : (
-              <div className="divide-y divide-gray-50">
-                {staffKpis.map((kpi, idx) => {
-                  const sScore = staffEval?.kpiScores?.[kpi.id] ?? null
-                  const supScore = supEval?.kpiScores?.[kpi.id] ?? null
-                  return (
-                    <div key={kpi.id} className="px-5 py-3 flex items-center gap-4">
-                      <span className="w-5 h-5 rounded-full bg-gray-100 text-gray-500 text-xs font-bold flex items-center justify-center shrink-0">{idx + 1}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-gray-800 truncate">{kpi.title}</p>
-                        <p className="text-[10px] text-gray-400 truncate">{kpi.assessmentMethod}</p>
-                      </div>
-                      <StatusBadge status={kpi.status} />
-                      <div className="flex items-center gap-3 text-xs shrink-0">
-                        <span className="text-blue-600 font-semibold">Staff: {sScore ?? '—'}/{maxPerItem}</span>
-                        <span className="text-indigo-600 font-semibold">Sup: {supScore ?? '—'}/{maxPerItem}</span>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
+            {isStaffExpanded && (
+              <>
+                {staffKpis.length === 0 ? (
+                  <div className="px-5 py-6 text-center text-xs text-gray-400">ไม่มี KPI ใน {filterQuarter}</div>
+                ) : (
+                  <div className="divide-y divide-gray-50">
+                    {staffKpis.map((kpi, idx) => {
+                      const sScore = staffEval?.kpiScores?.[kpi.id] ?? null
+                      const supScore = supEval?.kpiScores?.[kpi.id] ?? null
+                      return (
+                        <div key={kpi.id} className="px-5 py-3 flex items-start gap-4">
+                          <span className="w-5 h-5 rounded-full bg-gray-100 text-gray-500 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">{idx + 1}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-gray-800">{kpi.title}</p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">วิธีประเมิน: {kpi.assessmentMethod}</p>
+                            {kpi.remark && <p className="text-[10px] text-gray-400 mt-0.5">หมายเหตุ: {kpi.remark}</p>}
+                            {kpi.rejectReason && kpi.status === 'Rejected' && <p className="text-[10px] text-red-500 mt-0.5">เหตุผลที่ปฏิเสธ: {kpi.rejectReason}</p>}
+                          </div>
+                          <div className="flex flex-col items-end gap-2 shrink-0">
+                            <StatusBadge status={kpi.status} />
+                            <div className="flex items-center gap-3 text-xs mt-1">
+                              <span className="text-blue-600 font-semibold">Staff: {sScore ?? '—'}/{maxPerItem}</span>
+                              <span className="text-indigo-600 font-semibold">Sup: {supScore ?? '—'}/{maxPerItem}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
 
-            {/* Score summary */}
-            {(staffTotal !== null || supTotal !== null) && (
-              <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex items-center gap-6 text-xs">
-                <span className="text-gray-500">Staff: <strong className="text-blue-600">{staffTotal ?? '—'}/{maxPossible}</strong> ×0.40</span>
-                <span className="text-gray-500">Sup: <strong className="text-indigo-600">{supTotal ?? '—'}/{maxPossible}</strong> ×0.60</span>
-                <span className="text-gray-500">คะแนนรวม Part 3: <strong className={weightedScore !== null ? (weightedScore >= 24 ? 'text-green-600' : 'text-yellow-600') : 'text-gray-400'}>{weightedScore ?? '—'} / 30</strong></span>
-                <span className="text-[10px] text-gray-400">({staffTotal ?? '?'}×0.40 + {supTotal ?? '?'}×0.60)</span>
-              </div>
+                {/* Score summary */}
+                {(staffTotal !== null || supTotal !== null) && (
+                  <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex items-center gap-6 text-xs">
+                    <span className="text-gray-500">Staff: <strong className="text-blue-600">{staffTotal ?? '—'}/{maxPossible}</strong> ×0.40</span>
+                    <span className="text-gray-500">Sup: <strong className="text-indigo-600">{supTotal ?? '—'}/{maxPossible}</strong> ×0.60</span>
+                    <span className="text-gray-500">คะแนนรวม Part 3: <strong className={weightedScore !== null ? (weightedScore >= 24 ? 'text-green-600' : 'text-yellow-600') : 'text-gray-400'}>{weightedScore ?? '—'} / 30</strong></span>
+                    <span className="text-[10px] text-gray-400">({staffTotal ?? '?'}×0.40 + {supTotal ?? '?'}×0.60)</span>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )
@@ -890,7 +915,7 @@ export default function KpiPage() {
   const isAssignedAsStaff = data.staffConfigs.some(
     (c) => c.staffId === currentUser.id && c.year === selectedYear
   )
-  const isExecOrHR = ['HR', 'HRM', 'GM', 'MD'].includes(role)
+  const isExecOrHR = ['MasterAdmin', 'HR', 'HRM', 'GM', 'MD'].includes(role)
 
   const availableViews = []
   if (isAssignedAsStaff) availableViews.push({ id: 'staff', label: 'การประเมินตนเอง (Staff)', icon: UserCircle2 })
