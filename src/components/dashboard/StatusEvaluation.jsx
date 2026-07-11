@@ -1,4 +1,4 @@
-import { useApp } from '../../context/AppContext'
+import { useApp, getEffectiveConfig } from '../../context/AppContext'
 import { CheckCircle2, XCircle, User } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { subscribeAllUsers } from '../../services/authService'
@@ -74,7 +74,14 @@ export default function StatusEvaluation() {
     ? firebaseUsers
     : (data.users || []).map(normalizeAnyUser).filter(Boolean)
 
-  const configsThisYear = data.staffConfigs.filter((c) => c.year === selectedYear)
+  const configsThisYear = (() => {
+    const allStaffIds = [...new Set(
+      data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+    )]
+    return allStaffIds
+      .map((staffId) => getEffectiveConfig(data.staffConfigs, staffId, selectedYear, currentQuarter))
+      .filter(Boolean)
+  })()
 
   // Helper functions to check evaluation completion
   const hasScore = (e) =>

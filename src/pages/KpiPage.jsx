@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useApp } from '../context/AppContext'
+import { useApp, getEffectiveConfig } from '../context/AppContext'
 import useRBAC, { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../hooks/useRBAC'
 import { subscribeAllUsers } from '../services/authService'
 import {
@@ -113,10 +113,19 @@ function SupervisorView({ allUsers }) {
 
   const getUserById = (id) => allUsers.find((u) => u.id === id)
 
-  const myConfigs = data.staffConfigs.filter(
-    (c) => c.supervisorId === currentUser.id && c.year === selectedYear
-  )
-  const myStaff = myConfigs.map((c) => getUserById(c.staffId)).filter(Boolean)
+  // หา staff ที่ supervisor นี้ดูแลใน Q ใดก็ได้ของปีนี้ (dedup by staffId)
+  const allStaffIdsThisYear = [...new Set(
+    data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+  )]
+  const myStaff = allStaffIdsThisYear
+    .filter((staffId) => {
+      // ตรวจสอบทุก Q: ถ้ามี Q ไหนที่ effective config ชี้มาที่ currentUser → รวม
+      return ['Q1', 'Q2', 'Q3', 'Q4'].some(
+        (q) => getEffectiveConfig(data.staffConfigs, staffId, selectedYear, q)?.supervisorId === currentUser.id
+      )
+    })
+    .map((staffId) => getUserById(staffId))
+    .filter(Boolean)
 
   const myKpis = data.kpis.filter(
     (k) => k.year === selectedYear && k.supervisorId === currentUser.id
@@ -794,7 +803,7 @@ function OverviewView({ allUsers }) {
       ) : filteredStaff.map((staff) => {
         const staffKpis = yearKpis.filter(k => k.staffId === staff.id && k.quarter === filterQuarter)
         const accepted = staffKpis.filter(k => k.status === 'Accepted')
-        const supId = data.staffConfigs.find(c => c.staffId === staff.id && c.year === selectedYear)?.supervisorId
+        const supId = getEffectiveConfig(data.staffConfigs, staff.id, selectedYear, filterQuarter)?.supervisorId
         const supEval = supId ? getEvaluation(selectedYear, filterQuarter, staff.id, supId, 'part3_sup') : null
         const staffEval = getEvaluation(selectedYear, filterQuarter, staff.id, staff.id, 'part3_staff')
 
@@ -908,7 +917,7 @@ export default function KpiPage() {
 
   const allUsers = (firebaseUsers.length > 0 ? firebaseUsers : (data.users ?? [])).map(normalizeAnyUser).filter(Boolean)
 
-  // Determine view by staffConfig assignments, not role
+  // Determine view by staffConfig assignments, not role (ตรวจสอบทุก Q ของปีนี้)
   const isSupervisor = data.staffConfigs.some(
     (c) => c.supervisorId === currentUser.id && c.year === selectedYear
   )

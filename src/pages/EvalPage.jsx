@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useApp } from '../context/AppContext'
+import { useApp, getEffectiveConfig } from '../context/AppContext'
 import useRBAC, { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../hooks/useRBAC'
 import { subscribeAllUsers } from '../services/authService'
 import Part1Competency, { COMPETENCY_LIST } from '../components/eval/Part1Competency'
@@ -63,7 +63,7 @@ function getDisplayName(user) {
 }
 
 function useEvalAccess() {
-  const { data, currentUser, selectedYear } = useApp()
+  const { data, currentUser, selectedYear, activeQuarter } = useApp()
   const { role } = useRBAC()
   const [firebaseUsers, setFirebaseUsers] = useState([])
 
@@ -75,7 +75,14 @@ function useEvalAccess() {
   }, [])
 
   const allUsers = firebaseUsers.length > 0 ? firebaseUsers : data.users
-  const yearConfigs = data.staffConfigs.filter((c) => c.year === selectedYear)
+
+  // หา staffId ทั้งหมดในปีนี้ แล้วสร้าง yearConfigs จาก effective config ของ activeQuarter
+  const allStaffIdsThisYear = [...new Set(
+    data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+  )]
+  const yearConfigs = allStaffIdsThisYear
+    .map((staffId) => getEffectiveConfig(data.staffConfigs, staffId, selectedYear, activeQuarter))
+    .filter(Boolean)
 
   const supervisedStaff = yearConfigs
     .filter((c) => c.supervisorId === currentUser.id)

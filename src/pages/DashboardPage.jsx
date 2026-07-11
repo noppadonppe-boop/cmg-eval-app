@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useApp } from '../context/AppContext'
+import { useApp, getEffectiveConfig } from '../context/AppContext'
 import useRBAC, { ROLE_BADGE_CLASSES } from '../hooks/useRBAC'
 import Part5Quarterly from '../components/dashboard/Part5Quarterly'
 import Part6ExecAnnual from '../components/dashboard/Part6ExecAnnual'
@@ -194,7 +194,14 @@ export default function DashboardPage() {
 
   const [activeTab, setActiveTab] = useState(tabs[0]?.id || 'quarterly')
 
-  const configsThisYear = data.staffConfigs.filter((c) => c.year === selectedYear)
+  const configsThisYear = (() => {
+    const allStaffIds = [...new Set(
+      data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+    )]
+    return allStaffIds
+      .map((staffId) => getEffectiveConfig(data.staffConfigs, staffId, selectedYear, currentQuarter))
+      .filter(Boolean)
+  })()
   const kpisThisYear    = data.kpis.filter((k) => k.year === selectedYear)
   const evalsThisYear   = data.quarterlyEvaluations.filter((e) => e.year === selectedYear)
 
@@ -243,7 +250,7 @@ export default function DashboardPage() {
     return hasScore(findEvaluatorEval(staffId, stakeholderId, 'part1', 'Stakeholder'))
   }
 
-  const myConfig = (data.staffConfigs || []).find((c) => c.year === selectedYear && c.staffId === currentUser.id) || null
+  const myConfig = getEffectiveConfig(data.staffConfigs, currentUser.id, selectedYear, currentQuarter)
   const mySupervisor = myConfig?.supervisorId
     ? allUsers.find((u) => u.id === myConfig.supervisorId)
     : null

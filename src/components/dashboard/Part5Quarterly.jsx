@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar,
   Cell,
 } from 'recharts'
-import { useApp } from '../../context/AppContext'
+import { useApp, getEffectiveConfig } from '../../context/AppContext'
 import useRBAC, { ROLE_AVATAR_BG, ROLE_BADGE_CLASSES } from '../../hooks/useRBAC'
 import { getQuarterScores, QUARTERS, PART_COLORS, PART_LABELS, PART_MAX } from '../../utils/scoreUtils'
 import { ChevronDown, BarChart2, Target, CheckCircle2, Clock, XCircle } from 'lucide-react'
@@ -74,31 +74,32 @@ export default function Part5Quarterly() {
   const [selectedQuarter, setSelectedQuarter] = useState('Q1')
   const [selectedStaffId, setSelectedStaffId] = useState(null)
 
-  // Determine which staff to show based on staffConfig assignments (not role)
-  const yearConfigs = data.staffConfigs.filter((c) => c.year === selectedYear)
-  const isExecOrHR = ['HR', 'HRM', 'GM', 'MD'].includes(role)
+  // staffId ทั้งหมดในปีนี้ (ทุก Q รวมกัน, dedup)
+  const allStaffIdsThisYear = [...new Set(
+    data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+  )]
+
+  const isExecOrHR = ['HR', 'HRM', 'GM', 'MD', 'MasterAdmin'].includes(role)
   let staffList = []
   if (isExecOrHR) {
-    // Show all assigned staff
-    staffList = yearConfigs
-      .map((c) => data.users.find((u) => u.id === c.staffId))
+    // แสดง staff ทุกคนในปีนี้ (dedup แล้ว)
+    staffList = allStaffIdsThisYear
+      .map((id) => data.users.find((u) => u.id === id))
       .filter(Boolean)
   } else {
-    // Staff role: show themselves + any staff they supervise
+    // ใช้ effective config ของ selectedQuarter เพื่อหา staff ที่ตัวเองเป็น Supervisor
     const staffMap = new Map()
-    const selfConfig = yearConfigs.find((c) => c.staffId === currentUser.id)
-    if (selfConfig) staffMap.set(currentUser.id, currentUser)
-    yearConfigs
-      .filter((c) => c.supervisorId === currentUser.id)
-      .forEach((c) => {
-        const u = data.users.find((u) => u.id === c.staffId)
+    const selfEff = getEffectiveConfig(data.staffConfigs, currentUser.id, selectedYear, selectedQuarter)
+    if (selfEff) staffMap.set(currentUser.id, currentUser)
+    allStaffIdsThisYear.forEach((staffId) => {
+      const eff = getEffectiveConfig(data.staffConfigs, staffId, selectedYear, selectedQuarter)
+      if (eff?.supervisorId === currentUser.id) {
+        const u = data.users.find((u) => u.id === staffId)
         if (u) staffMap.set(u.id, u)
-      })
+      }
+    })
     staffList = [...staffMap.values()]
-    if (staffList.length === 0) {
-      // Fallback: show self even if no config found
-      staffList = [currentUser]
-    }
+    if (staffList.length === 0) staffList = [currentUser]
   }
 
   const activeStaffId = selectedStaffId || staffList[0]?.id || null

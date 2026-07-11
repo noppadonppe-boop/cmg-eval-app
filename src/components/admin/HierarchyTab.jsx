@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { useApp } from '../../context/AppContext'
+import { useApp, getEffectiveConfig } from '../../context/AppContext'
 import { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG, CAN_BE_STAKEHOLDER_ROLES } from '../../hooks/useRBAC'
-import { PlusCircle, Pencil, Trash2, Check, X, AlertCircle, Users, User, Briefcase, ChevronDown } from 'lucide-react'
+import { PlusCircle, Pencil, Trash2, Check, X, AlertCircle, Users, User, Briefcase, ChevronDown, Copy } from 'lucide-react'
 import { subscribeAllUsers } from '../../services/authService'
 
 const DEFAULT_LEAVE_QUOTA = 15
@@ -138,7 +138,7 @@ function MultiSelect({ options, selected, onChange, placeholder, maxSelected = n
 }
 
 export default function HierarchyTab() {
-  const { data, selectedYear, addStaffConfig, updateStaffConfig, removeStaffConfig } = useApp()
+  const { data, selectedYear, activeQuarter, addStaffConfig, updateStaffConfig, removeStaffConfig } = useApp()
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [firebaseUsers, setFirebaseUsers] = useState([])
@@ -159,8 +159,21 @@ export default function HierarchyTab() {
     return unsub
   }, [])
 
-  const yearConfigs = data.staffConfigs.filter((c) => c.year === selectedYear)
   const allUsers = firebaseUsers.length > 0 ? firebaseUsers : data.users.map(normalizeUser)
+
+  // หา staffId ทั้งหมดที่มี config ในปีนี้ (ทุก Q)
+  const allStaffIdsThisYear = [...new Set(
+    data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+  )]
+
+  // yearConfigs = effective config ต่อ staff สำหรับ activeQuarter
+  // ถ้า Q นั้นยังไม่มี config → inherit จาก Q ก่อนหน้า (_inherited = true)
+  const yearConfigs = allStaffIdsThisYear.map((staffId) => {
+    const eff = getEffectiveConfig(data.staffConfigs, staffId, selectedYear, activeQuarter)
+    if (!eff) return null
+    const isInherited = eff.quarter !== activeQuarter
+    return { ...eff, _inherited: isInherited, _inheritedFrom: isInherited ? (eff.quarter || 'ก่อนหน้า') : null }
+  }).filter(Boolean)
 
   // Req 4: Sort A-Z, ก-ฮ, 0-9
   const sortByName = (a, b) => (a.name || '').localeCompare(b.name || '', 'th', { numeric: true })
@@ -225,17 +238,24 @@ export default function HierarchyTab() {
   const isStakeActive = stakeStaffId !== '' || stakeholderIds.length > 0
 
   const upsertStaffConfig = (staffId, updates) => {
-    const cfg = yearConfigs.find((c) => c.staffId === staffId)
-    if (cfg) {
-      updateStaffConfig({ staffId, year: selectedYear }, updates)
+    // หา Q-specific config สำหรับ activeQuarter
+    const qCfg = data.staffConfigs.find(
+      (c) => c.staffId === staffId && c.year === selectedYear && c.quarter === activeQuarter
+    )
+    if (qCfg) {
+      // อัปเดต config ที่มีอยู่แล้วของ Q นี้
+      updateStaffConfig(qCfg.id, updates)
       return
     }
+    // ยังไม่มี Q-specific → สร้างใหม่ (inherit leaveQuota จาก effective config ก่อนหน้า)
+    const effCfg = getEffectiveConfig(data.staffConfigs, staffId, selectedYear, activeQuarter)
     addStaffConfig({
       year: selectedYear,
+      quarter: activeQuarter,
       staffId,
       supervisorId: '',
       stakeholderIds: [],
-      leaveQuota: DEFAULT_LEAVE_QUOTA,
+      leaveQuota: effCfg?.leaveQuota ?? DEFAULT_LEAVE_QUOTA,
       ...updates,
     })
   }
@@ -278,12 +298,15 @@ export default function HierarchyTab() {
     if (!leaveStaffId) { setError('เลือก Staff'); return }
     const q = Number(leaveQuota)
     if (Number.isNaN(q) || q < 0) { setError('โควตาวันลาไม่ถูกต้อง'); return }
-    const cfg = yearConfigs.find((c) => c.staffId === leaveStaffId)
-    upsertStaffConfig(leaveStaffId, {
-      supervisorId: cfg?.supervisorId || '',
-      stakeholderIds: cfg?.stakeholderIds || [],
-      leaveQuota: q,
-    })
+    // leaveQuota เป็นรายปี → อัปเดตทุก Q config ของ staff+year นี้พร้อมกัน
+    const staffYearCfgs = data.staffConfigs.filter(
+      (c) => c.staffId === leaveStaffId && c.year === selectedYear
+    )
+    if (staffYearCfgs.length === 0) {
+      upsertStaffConfig(leaveStaffId, { leaveQuota: q })
+    } else {
+      staffYearCfgs.forEach((cfg) => updateStaffConfig(cfg.id, { leaveQuota: q }))
+    }
     setLeaveStaffId('')
     setLeaveQuota(DEFAULT_LEAVE_QUOTA)
     setError('')
@@ -324,7 +347,8 @@ export default function HierarchyTab() {
               <h3 className="text-base font-semibold text-gray-900">ลบ Assignment</h3>
             </div>
             <p className="text-sm text-gray-600 mb-5">
-              ลบ Assignment พนักงานนี้ออกจากปี <strong>{selectedYear}</strong>? KPI และการประเมินที่บันทึกไว้แล้วจะยังคงอยู่
+              ลบ Assignment พนักงานนี้ออกจาก <strong>{selectedYear} · {confirmDelete?.quarter || activeQuarter}</strong>?
+              KPI และการประเมินที่บันทึกไว้แล้วจะยังคงอยู่ Q อื่นๆ ของปีนี้จะไม่ถูกกระทบ
             </p>
             <div className="flex gap-3">
               <button onClick={() => setConfirmDelete(null)} className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">ยกเลิก</button>
@@ -346,7 +370,7 @@ export default function HierarchyTab() {
           <div className="flex items-start justify-between gap-3 mb-3">
             <div>
               <h3 className="text-sm font-semibold text-gray-900">กำหนด Staff ให้กับ Supervisor</h3>
-              <p className="text-[11px] text-gray-500 mt-0.5">ปี {selectedYear} · Supervisor 1 คนเลือก Staff ได้ไม่จำกัด</p>
+              <p className="text-[11px] text-gray-500 mt-0.5">ปี {selectedYear} · <span className="font-bold text-indigo-600">{activeQuarter}</span> · Supervisor 1 คนเลือก Staff ได้ไม่จำกัด</p>
             </div>
             <div className="px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 text-[11px] text-gray-500">
               {supStaffIds.length} คน
@@ -411,7 +435,7 @@ export default function HierarchyTab() {
           <div className="flex items-start justify-between gap-3 mb-3">
             <div>
               <h3 className="text-sm font-semibold text-gray-900">กำหนด Stakeholders ให้กับ Staff</h3>
-              <p className="text-[11px] text-gray-500 mt-0.5">เลือกได้สูงสุด 3 คน · ซ้ำกับคนอื่นได้</p>
+              <p className="text-[11px] text-gray-500 mt-0.5">ปี {selectedYear} · <span className="font-bold text-indigo-600">{activeQuarter}</span> · เลือกได้สูงสุด 3 คน · ซ้ำกับคนอื่นได้</p>
             </div>
             <div className="px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 text-[11px] text-gray-500">
               {stakeholderIds.length}/3
@@ -545,8 +569,18 @@ export default function HierarchyTab() {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mt-4">
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-gray-900">การ Assign พนักงาน — {selectedYear}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">{filteredYearConfigs.length} / {yearConfigs.length} รายการ</p>
+            <h3 className="text-sm font-semibold text-gray-900">
+              การ Assign พนักงาน — {selectedYear} ·{' '}
+              <span className="text-indigo-600">{activeQuarter}</span>
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {filteredYearConfigs.length} / {yearConfigs.length} รายการ
+              {yearConfigs.some((c) => c._inherited) && (
+                <span className="ml-2 inline-flex items-center gap-1 text-[10px] text-amber-600 font-medium">
+                  <Copy size={10} /> มีค่า inherit จาก Q ก่อนหน้า
+                </span>
+              )}
+            </p>
           </div>
           <div className="w-full max-w-xs">
             <input
@@ -590,12 +624,20 @@ export default function HierarchyTab() {
                   const stakeholders = (cfg.stakeholderIds || []).map(getUserById).filter(Boolean)
 
                   return (
-                    <tr key={`${cfg.year}_${cfg.staffId}`} className="hover:bg-indigo-50/40 transition-colors group">
+                    <tr key={`${cfg.year}_${cfg.staffId}_${activeQuarter}`} className={`hover:bg-indigo-50/40 transition-colors group ${cfg._inherited ? 'bg-amber-50/30' : ''}`}>
                       {/* Staff */}
                       <td className="px-4 py-2 align-middle">
                         <div className="flex items-center gap-2">
                           <Avatar user={staff} size="sm" />
-                          <span className="font-semibold text-gray-900 truncate max-w-[140px] xl:max-w-[180px]" title={staff?.name}>{staff?.name || '—'}</span>
+                          <div>
+                            <span className="font-semibold text-gray-900 truncate max-w-[140px] xl:max-w-[180px]" title={staff?.name}>{staff?.name || '—'}</span>
+                            {cfg._inherited && (
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <Copy size={9} className="text-amber-500" />
+                                <span className="text-[9px] text-amber-500 font-medium">inherit จาก {cfg._inheritedFrom}</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
 
@@ -650,13 +692,22 @@ export default function HierarchyTab() {
                           >
                             <Users size={14} />
                           </button>
-                          <button
-                            onClick={() => setConfirmDelete({ staffId: cfg.staffId, year: cfg.year, id: cfg.id })}
-                            title="ลบ Assignment"
-                            className="p-1.5 rounded text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          {cfg._inherited ? (
+                            <span
+                              title={`ค่า inherit จาก ${cfg._inheritedFrom} — แก้ไขเพื่อสร้าง config เฉพาะ ${activeQuarter}`}
+                              className="p-1.5 rounded text-amber-400 cursor-default"
+                            >
+                              <Trash2 size={14} />
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmDelete({ id: cfg.id, staffId: cfg.staffId, year: cfg.year, quarter: cfg.quarter })}
+                              title={`ลบ Assignment ของ ${activeQuarter}`}
+                              className="p-1.5 rounded text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

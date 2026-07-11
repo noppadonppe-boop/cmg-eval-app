@@ -33,6 +33,30 @@ const INITIAL_DATA = {
 /** ลำดับความสำคัญของ Role สำหรับเลือก primary role */
 const ROLE_PRIORITY = ['MasterAdmin', 'MD', 'GM', 'HRM', 'HR', 'Creator', 'Staff', 'Viewer']
 
+/** ลำดับ Quarter */
+const QUARTER_ORDER = { Q1: 1, Q2: 2, Q3: 3, Q4: 4 }
+
+/**
+ * หา staffConfig ที่ effective สำหรับ (staffId, year, quarter) โดย:
+ * 1. ลอง exact match (year, quarter, staffId)
+ * 2. ถ้าไม่พบ → ลอง Q ก่อนหน้าแบบ descending (Q3→Q2→Q1)
+ * 3. ถ้าไม่พบ → fallback config ที่ไม่มี quarter (data เก่า)
+ */
+export function getEffectiveConfig(configs, staffId, year, quarter) {
+  const q = String(quarter || '').toUpperCase()
+  const qOrder = QUARTER_ORDER[q] || 0
+  if (qOrder > 0) {
+    const exact = configs.find((c) => c.staffId === staffId && c.year === year && c.quarter === q)
+    if (exact) return exact
+    for (let i = qOrder - 1; i >= 1; i--) {
+      const prevQ = Object.keys(QUARTER_ORDER).find((k) => QUARTER_ORDER[k] === i)
+      const prev = configs.find((c) => c.staffId === staffId && c.year === year && c.quarter === prevQ)
+      if (prev) return prev
+    }
+  }
+  return configs.find((c) => c.staffId === staffId && c.year === year && !c.quarter) || null
+}
+
 function getPrimaryRole(roles) {
   if (!Array.isArray(roles) || !roles.length) return 'Staff'
   for (const r of ROLE_PRIORITY) {
@@ -214,9 +238,13 @@ export function AppProvider({ children }) {
       const prevCfgs = prev?.staffConfigs ?? []
       const staffId = config?.staffId
       const year = config?.year
+      const quarter = config?.quarter || null
       if (prevCfgs.some((c) => c.id === id)) return prev
       if (!staffId || !year) return prev
-      const existingIdx = prevCfgs.findIndex((c) => c.staffId === staffId && c.year === year)
+      // dedup: (year, quarter, staffId) ถ้ามี quarter; (year, staffId, ไม่มี quarter) ถ้าไม่มี
+      const existingIdx = quarter
+        ? prevCfgs.findIndex((c) => c.staffId === staffId && c.year === year && c.quarter === quarter)
+        : prevCfgs.findIndex((c) => c.staffId === staffId && c.year === year && !c.quarter)
       if (existingIdx >= 0) {
         const updated = [...prevCfgs]
         updated[existingIdx] = { ...updated[existingIdx], ...config, id: updated[existingIdx].id }
@@ -292,14 +320,24 @@ export function AppProvider({ children }) {
     }))
   }
 
-  const getConfigForStaff = (staffId, year) =>
-    (data?.staffConfigs ?? []).find((c) => c.staffId === staffId && c.year === year) || null
+  const getConfigForStaff = (staffId, year, quarter = null) =>
+    getEffectiveConfig(data?.staffConfigs ?? [], staffId, year, quarter)
 
-  const getStaffForSupervisor = (supervisorId, year) =>
-    (data?.staffConfigs ?? [])
-      .filter((c) => c.supervisorId === supervisorId && c.year === year)
-      .map((c) => (data?.users ?? []).find((u) => u.id === c.staffId))
+  const getStaffForSupervisor = (supervisorId, year, quarter = null) => {
+    const configs = data?.staffConfigs ?? []
+    const users = data?.users ?? []
+    if (!quarter) {
+      return configs
+        .filter((c) => c.supervisorId === supervisorId && c.year === year)
+        .map((c) => users.find((u) => u.id === c.staffId))
+        .filter(Boolean)
+    }
+    const staffIds = [...new Set(configs.filter((c) => c.year === year).map((c) => c.staffId))]
+    return staffIds
+      .filter((staffId) => getEffectiveConfig(configs, staffId, year, quarter)?.supervisorId === supervisorId)
+      .map((staffId) => users.find((u) => u.id === staffId))
       .filter(Boolean)
+  }
 
   const getUserById = (id) => (data?.users ?? []).find((u) => u.id === id) || null
 
