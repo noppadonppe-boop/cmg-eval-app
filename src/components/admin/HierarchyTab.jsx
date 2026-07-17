@@ -146,6 +146,8 @@ export default function HierarchyTab() {
   const [unassignedSearch, setUnassignedSearch] = useState('')
   const [supSupervisorId, setSupSupervisorId] = useState('')
   const [supStaffIds, setSupStaffIds] = useState([])
+  const [loadedSupStaffIds, setLoadedSupStaffIds] = useState([])
+  const [supEditSource, setSupEditSource] = useState('')
   const [stakeStaffId, setStakeStaffId] = useState('')
   const [stakeholderIds, setStakeholderIds] = useState([])
   const [leaveStaffId, setLeaveStaffId] = useState('')
@@ -262,7 +264,7 @@ export default function HierarchyTab() {
 
   const applySupervisorAssignments = () => {
     if (!supSupervisorId) { setError('เลือก Supervisor'); return }
-    if (supStaffIds.length === 0) { setError('เลือก Staff อย่างน้อย 1 คน'); return }
+    if (supStaffIds.length === 0 && loadedSupStaffIds.length === 0) { setError('เลือก Staff อย่างน้อย 1 คน'); return }
     if (supStaffIds.includes(supSupervisorId)) { setError('Supervisor ไม่สามารถเป็น Staff ของตัวเอง'); return }
     supStaffIds.forEach((staffId) => {
       const cfg = yearConfigs.find((c) => c.staffId === staffId)
@@ -272,9 +274,24 @@ export default function HierarchyTab() {
         leaveQuota: cfg?.leaveQuota ?? DEFAULT_LEAVE_QUOTA,
       })
     })
+    // ถ้าเปิดแก้ไขจาก Supervisor ให้ยกเลิก assignment ของ Staff ที่ถูกนำออกจากรายการ
+    if (supEditSource === 'supervisor') {
+      loadedSupStaffIds
+        .filter((staffId) => !supStaffIds.includes(staffId))
+        .forEach((staffId) => {
+          const cfg = yearConfigs.find((c) => c.staffId === staffId)
+          upsertStaffConfig(staffId, {
+            supervisorId: '',
+            stakeholderIds: cfg?.stakeholderIds || [],
+            leaveQuota: cfg?.leaveQuota ?? DEFAULT_LEAVE_QUOTA,
+          })
+        })
+    }
     // Req 2: Clear after save
     setSupSupervisorId('')
     setSupStaffIds([])
+    setLoadedSupStaffIds([])
+    setSupEditSource('')
     setError('')
   }
 
@@ -315,6 +332,8 @@ export default function HierarchyTab() {
   const quickEdit = (cfg) => {
     setSupSupervisorId(cfg.supervisorId || '')
     setSupStaffIds([cfg.staffId].filter(Boolean))
+    setLoadedSupStaffIds([])
+    setSupEditSource('staff')
     setStakeStaffId('')
     setStakeholderIds([])
     setLeaveStaffId(cfg.staffId || '')
@@ -326,6 +345,8 @@ export default function HierarchyTab() {
   const quickEditStakeholder = (cfg) => {
     setSupSupervisorId('')
     setSupStaffIds([])
+    setLoadedSupStaffIds([])
+    setSupEditSource('')
     setStakeStaffId(cfg.staffId || '')
     setStakeholderIds(cfg.stakeholderIds || [])
     setLeaveStaffId(cfg.staffId || '')
@@ -370,7 +391,7 @@ export default function HierarchyTab() {
           <div className="flex items-start justify-between gap-3 mb-3">
             <div>
               <h3 className="text-sm font-semibold text-gray-900">กำหนด Staff ให้กับ Supervisor</h3>
-              <p className="text-[11px] text-gray-500 mt-0.5">ปี {selectedYear} · <span className="font-bold text-indigo-600">{activeQuarter}</span> · Supervisor 1 คนเลือก Staff ได้ไม่จำกัด</p>
+              <p className="text-[11px] text-gray-500 mt-0.5">ปี {selectedYear} · <span className="font-bold text-indigo-600">{activeQuarter}</span> · เลือก Supervisor เพื่อโหลด Staff เดิมมาแก้ไข</p>
             </div>
             <div className="px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 text-[11px] text-gray-500">
               {supStaffIds.length} คน
@@ -385,7 +406,19 @@ export default function HierarchyTab() {
               <select
                 disabled={isStakeActive}
                 value={supSupervisorId}
-                onChange={(e) => { setSupSupervisorId(e.target.value); setError('') }}
+                onChange={(e) => {
+                  const id = e.target.value
+                  setSupSupervisorId(id)
+                  if (supEditSource !== 'staff') {
+                    const assignedStaffIds = id
+                      ? yearConfigs.filter((cfg) => cfg.supervisorId === id).map((cfg) => cfg.staffId)
+                      : []
+                    setSupStaffIds(assignedStaffIds)
+                    setLoadedSupStaffIds(assignedStaffIds)
+                    setSupEditSource(id ? 'supervisor' : '')
+                  }
+                  setError('')
+                }}
                 className="w-full px-2.5 py-2 rounded-lg border border-gray-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
               >
                 <option value="">— เลือก Supervisor —</option>
@@ -412,7 +445,12 @@ export default function HierarchyTab() {
               {supStaffIds.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => { setSupStaffIds([]); setSupSupervisorId('') }}
+                  onClick={() => {
+                    setSupStaffIds([])
+                    setLoadedSupStaffIds([])
+                    setSupSupervisorId('')
+                    setSupEditSource('')
+                  }}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50"
                 >
                   <X size={13} /> ล้าง
@@ -462,9 +500,8 @@ export default function HierarchyTab() {
                 <option value="">— เลือก Staff —</option>
                 {evaluatableUsers.map((u) => {
                   const cnt = staffStakeholderCount(u.id)
-                  const isFull = cnt >= 3
                   return (
-                    <option key={u.id} value={u.id} disabled={isFull && stakeStaffId !== u.id} className={isFull && stakeStaffId !== u.id ? 'text-gray-400' : ''}>
+                    <option key={u.id} value={u.id}>
                       {u.name} ({cnt}/3)
                     </option>
                   )
