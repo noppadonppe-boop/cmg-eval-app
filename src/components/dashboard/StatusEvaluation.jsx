@@ -3,6 +3,7 @@ import { CheckCircle2, XCircle, User } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { subscribeAllUsers } from '../../services/authService'
 import { getYearScorePartUsage } from '../../utils/scoreUtils'
+import { filterVisibleUsers } from '../../utils/userUtils'
 
 function getInitials(name = '') {
   const parts = String(name).trim().split(/\s+/).filter(Boolean)
@@ -70,13 +71,13 @@ export default function StatusEvaluation() {
     return unsub
   }, [])
 
-  const allUsers = firebaseUsers.length > 0
+  const allUsers = filterVisibleUsers(firebaseUsers.length > 0
     ? firebaseUsers
-    : (data.users || []).map(normalizeAnyUser).filter(Boolean)
+    : (data.users || []).map(normalizeAnyUser).filter(Boolean))
 
   const configsThisYear = (() => {
     const allStaffIds = [...new Set(
-      data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+      data.staffConfigs.filter((c) => c.year === selectedYear && allUsers.some((u) => u.id === c.staffId)).map((c) => c.staffId)
     )]
     return allStaffIds
       .map((staffId) => getEffectiveConfig(data.staffConfigs, staffId, selectedYear, currentQuarter))

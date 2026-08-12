@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { Outlet, useLocation, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { useApp } from '../context/AppContext'
+import { useApp, getEffectiveConfig } from '../context/AppContext'
 import useRBAC from '../hooks/useRBAC'
-import { subscribePendingCount } from '../services/authService'
+import { subscribeAllUsers, subscribePendingCount } from '../services/authService'
+import { isEvaluationReady } from '../utils/evaluationReadiness'
+import { isDeveloperUser } from '../utils/userUtils'
 import UserManagement from './UserManagement'
 import {
   LayoutDashboard, ClipboardList, Target, BookOpen, Settings, Users,
@@ -58,6 +60,7 @@ export default function Layout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [showUserMgmt, setShowUserMgmt] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
+  const [allUsers, setAllUsers] = useState([])
   const [profileDropOpen, setProfileDropOpen] = useState(false)
   const [yearDropOpen, setYearDropOpen] = useState(false)
   const [editProfileOpen, setEditProfileOpen] = useState(false)
@@ -69,8 +72,23 @@ export default function Layout() {
   const canSwitchYear = can('canManageYears')
 
   // Determine which nav links to show
-  const isSupervisor = data?.staffConfigs?.some(c => c.supervisorId === currentUser?.id && c.year === selectedYear)
-  const isAssignedStaff = data?.staffConfigs?.some(c => c.staffId === currentUser?.id && c.year === selectedYear)
+  const knownUsers = [...allUsers, ...(data?.users || [])]
+  const isVisibleUserId = (id) => {
+    const user = knownUsers.find((item) => (item.id || item.uid) === id)
+    return !user || !isDeveloperUser(user)
+  }
+
+  const yearConfigs = [...new Set(
+    (data?.staffConfigs || [])
+      .filter((c) => c.year === selectedYear)
+      .filter((c) => isVisibleUserId(c.staffId))
+      .map((c) => c.staffId)
+  )]
+    .map((staffId) => getEffectiveConfig(data?.staffConfigs || [], staffId, selectedYear, activeQuarter))
+    .filter(Boolean)
+
+  const isSupervisor = !isDeveloperUser(currentUser) && yearConfigs.some(c => c.supervisorId === currentUser?.id)
+  const isAssignedStaff = !isDeveloperUser(currentUser) && yearConfigs.some(c => c.staffId === currentUser?.id)
 
   const navVisible = {
     '/eval': can('canSelfAssessCompetency') || can('canInputDiscipline') || can('canEvaluateJD') || isSupervisor || isAssignedStaff,
@@ -90,33 +108,22 @@ export default function Layout() {
     k => k.staffId === currentUser?.id && k.year === selectedYear && k.status === 'Pending'
   ).length || 0
   
-  // Helper: Check if staff is ready for evaluation (setup complete)
-  const isStaffReady = (staffId) => {
-    // TEMPORARY: Relaxed requirements for testing
-    // Return true if staff has basic data (discipline + KPIs), ignore other requirements for now
-    
-    const quarterKpis = (data?.kpis || []).filter(
-      k => k.staffId === staffId && k.year === selectedYear && k.quarter === quarter
-    )
-    
-    // Check discipline data exists (Part 2 must be set by HR)
-    const disciplineSet = (data?.quarterlyEvaluations || []).some(
-      e => e.staffId === staffId && e.year === selectedYear && e.quarter === quarter && e.part === 'part2'
-    )
-    
-    // Check KPI - must have 3 accepted KPIs
-    const kpiSetAndAcceptedAll3 = quarterKpis.length === 3 && quarterKpis.every(k => k.status === 'Accepted')
-    
-    // RELAXED: Only require discipline OR KPIs (not both)
-    const isReady = disciplineSet || kpiSetAndAcceptedAll3
-    
-    return isReady
-  }
+  const evaluationUsers = [...allUsers, ...(data?.users || [])]
+    .map((user) => ({ ...user, id: user.id || user.uid }))
+    .filter((user) => !isDeveloperUser(user))
+    .filter((user, index, users) => user.id && users.findIndex((item) => item.id === user.id) === index)
+
+  // Do not count cards until the same setup requirements used by Evaluation Forms are met.
+  const isStaffReady = (staffId) => isEvaluationReady({
+    data,
+    staffId,
+    year: selectedYear,
+    quarter,
+    users: evaluationUsers,
+  })
   
   const evalPendingCount = (() => {
     let count = 0
-    const yearConfigs = data?.staffConfigs?.filter(c => c.year === selectedYear) || []
-    
     // Helper to check if evaluation exists
     const hasEval = (staffId, part, evaluatorId = null) => {
       if (evaluatorId) {
@@ -172,7 +179,9 @@ export default function Layout() {
   const statusEvalPendingCount = (() => {
     if (!canSeeStatusEvaluation) return 0
 
-    const yearConfigs = data?.staffConfigs?.filter((c) => c.year === selectedYear) || []
+    const yearConfigs = data?.staffConfigs?.filter(
+      (c) => c.year === selectedYear && isVisibleUserId(c.staffId)
+    ) || []
     const evaluations = data?.quarterlyEvaluations || []
 
     const hasScore = (e) =>
@@ -236,6 +245,10 @@ export default function Layout() {
   })()
 
   // Subscribe to pending count (MasterAdmin only)
+  useEffect(() => {
+    return subscribeAllUsers((users) => setAllUsers(users))
+  }, [])
+
   useEffect(() => {
     if (!isMasterAdmin || !hasConfig) return
     return subscribePendingCount(setPendingCount)

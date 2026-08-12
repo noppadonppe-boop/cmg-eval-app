@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useRef } from 'react'
-import { subscribeToRoot, seedIfEmpty, persistUpdate, hasConfig } from '../services/firestoreService'
+import { subscribeToApp, seedIfEmpty, persistUpdate, hasConfig } from '../services/firestoreService'
 import { useAuth } from './AuthContext'
+import { normalizePositions } from '../utils/userUtils'
 
 const INITIAL_DATA = {
   users: [
@@ -82,6 +83,8 @@ export function AppProvider({ children }) {
       name: [profile.firstName, profile.lastName].filter(Boolean).join(' ') || profile.email || 'User',
       role: getPrimaryRole(profile.roles),
       roles: profile.roles || ['Staff'],
+      positions: normalizePositions(profile),
+      position: profile.position || '',
       staffCode: profile.staffCode || '',
       photoURL: profile.photoURL || '',
       jdUrl: '',
@@ -146,9 +149,12 @@ export function AppProvider({ children }) {
 
   // Persist to Firestore (Transaction-based to prevent overwrites)
   const setDataAndPersist = (updater) => {
+    const persistenceTarget = selectedYear && activeQuarter
+      ? { year: selectedYear, quarter: activeQuarter }
+      : null
     setData((prev) => updater(prev))
     if (hasConfig) {
-      persistUpdate(updater).catch((e) => console.error('Firestore write error:', e))
+      persistUpdate(updater, persistenceTarget).catch((e) => console.error('Firestore write error:', e))
     }
   }
 
@@ -166,7 +172,7 @@ export function AppProvider({ children }) {
       setData((prev) => prev ?? INITIAL_DATA)
       setLoading(false)
     }, 8000)
-    const unsub = subscribeToRoot((remote) => {
+    const unsub = subscribeToApp((remote) => {
       if (remote === null) {
         seedIfEmpty(INITIAL_DATA).then(() => {})
         return
@@ -399,6 +405,34 @@ export function AppProvider({ children }) {
     })
   }
 
+  const removeEvaluation = (evalRecord) => {
+    if (!evalRecord) return
+    const roles = Array.isArray(currentUser?.roles)
+      ? currentUser.roles
+      : [currentUser?.role || 'Staff']
+    if (!roles.includes('MasterAdmin')) return
+
+    setDataAndPersist((prev) => {
+      const evals = prev?.quarterlyEvaluations ?? []
+      let next
+
+      if (evalRecord.id) {
+        // Evaluation ids are unique, so only the selected evaluator/part record is removed.
+        next = evals.filter((e) => e.id !== evalRecord.id)
+      } else if (Number.isInteger(evalRecord.quarterlyEvaluationIndex)) {
+        // Backward compatibility for legacy records that were saved without an id.
+        next = evals.filter((_, index) => index !== evalRecord.quarterlyEvaluationIndex)
+      } else {
+        const index = evals.findIndex((e) => e === evalRecord)
+        if (index < 0) return prev
+        next = evals.filter((_, currentIndex) => currentIndex !== index)
+      }
+
+      if (next.length === evals.length) return prev
+      return { ...prev, quarterlyEvaluations: next }
+    })
+  }
+
   const getEvaluation = (year, quarter, staffId, evaluatorId, part, evaluatorRole = null) =>
     (data?.quarterlyEvaluations ?? []).find(
       (e) =>
@@ -475,6 +509,7 @@ export function AppProvider({ children }) {
         respondKpi,
         resetEvaluationsForYear,
         saveEvaluation,
+        removeEvaluation,
         getEvaluation,
         getEvaluationForPart,
       }}

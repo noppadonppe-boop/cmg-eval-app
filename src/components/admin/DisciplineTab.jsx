@@ -5,6 +5,7 @@ import { useApp } from '../../context/AppContext';
 import { ROLE_AVATAR_BG } from '../../hooks/useRBAC';
 import Part2Discipline from '../eval/Part2Discipline';
 import { subscribeAllUsers } from '../../services/authService';
+import { filterVisibleUsers } from '../../utils/userUtils';
 
 export default function DisciplineTab() {
   const { userProfile, firebaseUser } = useAuth();
@@ -28,14 +29,15 @@ export default function DisciplineTab() {
     ? [userProfile.firstName, userProfile.lastName].filter(Boolean).join(' ') || userProfile.email
     : firebaseUser?.displayName || firebaseUser?.email || 'Unknown User';
   
+  const visibleUsers = filterVisibleUsers(fbUsers);
   const filteredUsers = search.trim()
-    ? fbUsers.filter(u => {
+    ? visibleUsers.filter(u => {
         const name = [u.firstName, u.lastName].join(' ').toLowerCase();
         return name.includes(search.toLowerCase()) || 
                String(u.staffCode || '').toLowerCase().includes(search.toLowerCase()) ||
                (u.email || '').toLowerCase().includes(search.toLowerCase());
       })
-    : fbUsers;
+    : visibleUsers;
 
   return (
     <div className="space-y-6">

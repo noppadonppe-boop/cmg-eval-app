@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from 'react'
 import { useApp, getEffectiveConfig } from '../context/AppContext'
 import useRBAC, { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../hooks/useRBAC'
 import { subscribeAllUsers } from '../services/authService'
+import { filterVisibleUsers, isDeveloperUser } from '../utils/userUtils'
 import {
   Target, PlusCircle, CheckCircle2, XCircle, Clock, Pencil, Trash2,
   AlertCircle, Check, X, Filter, Eye, Info, Users, UserCircle2,
-  ChevronDown, ChevronUp
+  ChevronDown, ChevronUp, Copy
 } from 'lucide-react'
 
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4']
@@ -141,6 +142,24 @@ function SupervisorView({ allUsers }) {
   const canSend = !editingId && remainingSlots > 0 && drafts.length === remainingSlots
   const canAddDraft = !editingId && remainingSlots > 0 && drafts.length < remainingSlots
 
+  const previousQuarterIndex = QUARTERS.indexOf(form.quarter) - 1
+  const previousQuarter = previousQuarterIndex >= 0 ? QUARTERS[previousQuarterIndex] : null
+  const previousQuarterKpis = previousQuarter && form.staffId
+    ? data.kpis
+      .filter((k) => k.year === selectedYear && k.staffId === form.staffId && k.quarter === previousQuarter)
+      .slice()
+      .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))
+      .slice(0, KPI_MAX_PER_QUARTER)
+    : []
+  const canDuplicate = !editingId
+    && Boolean(previousQuarter)
+    && previousQuarterKpis.length > 0
+    && remainingSlots > 0
+    && drafts.length === 0
+    && !form.title.trim()
+    && !form.assessmentMethod.trim()
+    && !form.remark.trim()
+
   const validateEdit = () => {
     const e = {}
     if (!form.staffId) e.staffId = 'เลือกพนักงาน'
@@ -194,9 +213,41 @@ function SupervisorView({ allUsers }) {
     setDrafts((prev) => prev.filter((d) => d.id !== id))
   }
 
+  const updateDraft = (id, field, value) => {
+    setDrafts((prev) => prev.map((draft) => (
+      draft.id === id ? { ...draft, [field]: value } : draft
+    )))
+  }
+
+  const duplicatePreviousQuarter = () => {
+    if (!canDuplicate) return
+    const copiedKpis = previousQuarterKpis.slice(0, remainingSlots).map((kpi) => ({
+      id: `draft_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      staffId: form.staffId,
+      quarter: form.quarter,
+      title: kpi.title || '',
+      assessmentMethod: kpi.assessmentMethod || '',
+      remark: kpi.remark || '',
+    }))
+    setDrafts(copiedKpis)
+    setForm((prev) => ({ ...prev, title: '', assessmentMethod: '', remark: '' }))
+    setErrors({})
+  }
+
+  const validateDrafts = () => {
+    const invalidDraft = drafts.find((draft) => !draft.title.trim() || !draft.assessmentMethod.trim())
+    if (invalidDraft) {
+      setErrors({ drafts: 'กรุณากรอกงานที่มอบหมายและวิธีการประเมินให้ครบทุกข้อ' })
+      return false
+    }
+    setErrors({})
+    return true
+  }
+
   const sendDrafts = () => {
     if (sendingRef.current) return
     if (!canSend) return
+    if (!validateDrafts()) return
     sendingRef.current = true
     setSending(true)
     drafts.forEach((d) => {
@@ -322,7 +373,7 @@ function SupervisorView({ allUsers }) {
 
       {assignOpen && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-2xl mx-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <div>
                 <h3 className="text-sm font-semibold text-gray-900">{editingId ? 'แก้ไข KPI' : 'มอบหมาย KPI ใหม่'}</h3>
@@ -379,18 +430,36 @@ function SupervisorView({ allUsers }) {
               {!editingId && (
                 <div className="md:col-span-2">
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-semibold text-gray-700">
-                      รายการที่เตรียมส่ง: {drafts.length}/{remainingSlots}
-                    </p>
-                    {drafts.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setDrafts([])}
-                        className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-100"
-                      >
-                        ล้างรายการ
-                      </button>
-                    )}
+                    <div>
+                      <p className="text-xs font-semibold text-gray-700">
+                        รายการที่เตรียมส่ง: {drafts.length}/{remainingSlots}
+                      </p>
+                      {previousQuarter && previousQuarterKpis.length > 0 && (
+                        <p className="text-[11px] text-gray-400 mt-0.5">
+                          กด Duplicate เพื่อคัดลอกจาก {previousQuarter} แล้วแก้ไขได้ก่อนส่ง
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {canDuplicate && (
+                        <button
+                          type="button"
+                          onClick={duplicatePreviousQuarter}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100"
+                        >
+                          <Copy size={13} /> Duplicate {previousQuarter}
+                        </button>
+                      )}
+                      {drafts.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setDrafts([])}
+                          className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-100"
+                        >
+                          ล้างรายการ
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {remainingSlots === 0 ? (
                     <div className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-xs text-gray-500">
@@ -407,10 +476,28 @@ function SupervisorView({ allUsers }) {
                           <div className="w-6 h-6 rounded-full bg-indigo-50 text-indigo-700 flex items-center justify-center text-xs font-bold shrink-0">
                             {idx + 1}
                           </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs font-semibold text-gray-900 truncate">{d.title}</p>
-                            <p className="text-[11px] text-gray-500 truncate">{d.assessmentMethod}</p>
-                            {d.remark && <p className="text-[11px] text-gray-400 truncate">{d.remark}</p>}
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <input
+                              type="text"
+                              value={d.title}
+                              onChange={(e) => updateDraft(d.id, 'title', e.target.value)}
+                              placeholder="งานที่มอบหมาย *"
+                              className="w-full px-2.5 py-1.5 rounded-md border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <input
+                              type="text"
+                              value={d.assessmentMethod}
+                              onChange={(e) => updateDraft(d.id, 'assessmentMethod', e.target.value)}
+                              placeholder="วิธีการประเมิน *"
+                              className="w-full px-2.5 py-1.5 rounded-md border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <input
+                              type="text"
+                              value={d.remark}
+                              onChange={(e) => updateDraft(d.id, 'remark', e.target.value)}
+                              placeholder="หมายเหตุ (ถ้ามี)"
+                              className="w-full px-2.5 py-1.5 rounded-md border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
                           </div>
                           <button
                             type="button"
@@ -423,6 +510,7 @@ function SupervisorView({ allUsers }) {
                       ))}
                     </div>
                   )}
+                  {errors.drafts && <p className="text-xs text-red-500 mt-1">{errors.drafts}</p>}
                 </div>
               )}
 
@@ -812,6 +900,7 @@ function OverviewView({ allUsers }) {
         const kpiCount = staffKpis.length
         const maxPerItem = kpiMaxPerItem(kpiCount)
         const maxPossible = kpiCount * maxPerItem
+        const hasIncompleteKpis = kpiCount !== KPI_MAX_PER_QUARTER
 
         let weightedScore = null
         if (staffTotal !== null && supTotal !== null) {
@@ -825,9 +914,9 @@ function OverviewView({ allUsers }) {
         const isStaffExpanded = expandedStaffIds.has(staff.id) || filterStaff !== 'all'
 
         return (
-          <div key={staff.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div key={staff.id} className={`rounded-xl border shadow-sm overflow-hidden ${hasIncompleteKpis ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
             <div
-              className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer hover:bg-gray-100 transition-colors"
+              className={`flex items-center justify-between px-5 py-3 border-b cursor-pointer transition-colors ${hasIncompleteKpis ? 'bg-red-50 border-red-100 hover:bg-red-100' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`}
               onClick={() => toggleStaffExpand(staff.id)}
             >
               <div className="flex items-center gap-2.5">
@@ -915,13 +1004,13 @@ export default function KpiPage() {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [selectedYear])
 
-  const allUsers = (firebaseUsers.length > 0 ? firebaseUsers : (data.users ?? [])).map(normalizeAnyUser).filter(Boolean)
+  const allUsers = filterVisibleUsers((firebaseUsers.length > 0 ? firebaseUsers : (data.users ?? [])).map(normalizeAnyUser).filter(Boolean))
 
   // Determine view by staffConfig assignments, not role (ตรวจสอบทุก Q ของปีนี้)
-  const isSupervisor = data.staffConfigs.some(
-    (c) => c.supervisorId === currentUser.id && c.year === selectedYear
+  const isSupervisor = !isDeveloperUser(currentUser) && data.staffConfigs.some(
+    (c) => c.supervisorId === currentUser.id && c.year === selectedYear && allUsers.some((u) => u.id === c.staffId)
   )
-  const isAssignedAsStaff = data.staffConfigs.some(
+  const isAssignedAsStaff = !isDeveloperUser(currentUser) && data.staffConfigs.some(
     (c) => c.staffId === currentUser.id && c.year === selectedYear
   )
   const isExecOrHR = ['MasterAdmin', 'HR', 'HRM', 'GM', 'MD'].includes(role)

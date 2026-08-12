@@ -8,6 +8,7 @@ import { useApp } from '../../context/AppContext'
 import { ROLE_AVATAR_BG, ROLE_BADGE_CLASSES } from '../../hooks/useRBAC'
 import { getAnnualScores, PART_COLORS, PART_LABELS } from '../../utils/scoreUtils'
 import { TrendingUp, Users, Award, BarChart2 } from 'lucide-react'
+import { isDeveloperUser } from '../../utils/userUtils'
 
 const STAFF_PALETTE = [
   '#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#0ea5e9', '#f97316', '#14b8a6',
@@ -53,6 +54,7 @@ export default function Part6ExecAnnual() {
     data.staffConfigs
       .map((c) => data.users.find((u) => u.id === c.staffId))
       .filter(Boolean)
+      .filter((u) => !isDeveloperUser(u))
       .map((u) => [u.id, u])
   ).values()]
 

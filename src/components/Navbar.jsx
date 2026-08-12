@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { LayoutDashboard, BookOpen, Settings, ChevronDown, CalendarDays, UserCircle2, Target, ClipboardList } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 import useRBAC, { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../hooks/useRBAC'
+import { filterVisibleUsers } from '../utils/userUtils'
 
 export default function Navbar() {
   const { data, currentUser, setCurrentUser, selectedYear, setSelectedYear } = useApp()
@@ -135,7 +136,7 @@ export default function Navbar() {
                     <span className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Switch User</span>
                   </div>
                   <div className="py-1">
-                    {data.users.map((user) => (
+                    {filterVisibleUsers(data.users).map((user) => (
                       <button
                         key={user.id}
                         onClick={() => { setCurrentUser(user); setUserOpen(false) }}

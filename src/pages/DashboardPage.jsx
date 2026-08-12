@@ -6,6 +6,7 @@ import Part6ExecAnnual from '../components/dashboard/Part6ExecAnnual'
 import StatusEvaluation from '../components/dashboard/StatusEvaluation'
 import { BarChart2, Users, ClipboardList, TrendingUp, LayoutDashboard, CheckCircle2, XCircle, ListChecks } from 'lucide-react'
 import { subscribeAllUsers } from '../services/authService'
+import { filterVisibleUsers } from '../utils/userUtils'
 
 function StatCard({ label, value, icon, bg }) {
   return (
@@ -181,9 +182,9 @@ export default function DashboardPage() {
   const showStatusEval = ['HR', 'HRM', 'GM', 'MD', 'MasterAdmin'].includes(role)
   const showStatsStrip = !['Staff', 'HR', 'HRM'].includes(role)
   const currentQuarter = activeQuarter || 'Q1'
-  const allUsers = firebaseUsers.length > 0
+  const allUsers = filterVisibleUsers(firebaseUsers.length > 0
     ? firebaseUsers
-    : (data.users || []).map(normalizeAnyUser).filter(Boolean)
+    : (data.users || []).map(normalizeAnyUser).filter(Boolean))
 
   // Tabs only shown to HR/MD who can see both
   const tabs = [
@@ -196,7 +197,7 @@ export default function DashboardPage() {
 
   const configsThisYear = (() => {
     const allStaffIds = [...new Set(
-      data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+      data.staffConfigs.filter((c) => c.year === selectedYear && allUsers.some((u) => u.id === c.staffId)).map((c) => c.staffId)
     )]
     return allStaffIds
       .map((staffId) => getEffectiveConfig(data.staffConfigs, staffId, selectedYear, currentQuarter))

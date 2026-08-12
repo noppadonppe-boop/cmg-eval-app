@@ -2,6 +2,8 @@ rules_version = '2';
 // Firestore Security Rules for CMG Performance Evaluation
 // โครงสร้าง:
 //   Collection: CMG-eval-app > Document: root       → app data (users, kpis, etc.)
+//   Collection: CMG-eval-app/root/Q2_2026 (and Q3/Q4) > Document: data
+//                                                    → quarter-specific data
 //   SubCollection: CMG-eval-app/root/users/{uid}    → auth user profiles
 //   SubCollection: CMG-eval-app/root/appMeta/{id}   → first user config
 //   SubCollection: CMG-eval-app/root/activityLogs/{id} → activity logs

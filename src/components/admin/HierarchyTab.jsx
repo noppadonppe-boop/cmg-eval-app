@@ -3,6 +3,7 @@ import { useApp, getEffectiveConfig } from '../../context/AppContext'
 import { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG, CAN_BE_STAKEHOLDER_ROLES } from '../../hooks/useRBAC'
 import { PlusCircle, Pencil, Trash2, Check, X, AlertCircle, Users, User, Briefcase, ChevronDown, Copy } from 'lucide-react'
 import { subscribeAllUsers } from '../../services/authService'
+import { filterVisibleUsers, normalizePositions } from '../../utils/userUtils'
 
 const DEFAULT_LEAVE_QUOTA = 15
 
@@ -25,16 +26,6 @@ function getUserPrimaryRole(user) {
     return user.roles[0]
   }
   return 'Staff'
-}
-
-function normalizePositions(user) {
-  if (Array.isArray(user?.positions) && user.positions.length > 0) return user.positions
-  const roles = Array.isArray(user?.roles) ? user.roles : [user?.role].filter(Boolean)
-  const hasStaff = roles.includes('Staff')
-  const hasNonStaff = roles.some((r) => r && r !== 'Staff')
-  if (hasStaff && hasNonStaff) return ['Staff', 'Supervisor']
-  if (hasNonStaff) return ['Supervisor']
-  return ['Staff']
 }
 
 function normalizeUser(firebaseUser) {
@@ -161,11 +152,11 @@ export default function HierarchyTab() {
     return unsub
   }, [])
 
-  const allUsers = firebaseUsers.length > 0 ? firebaseUsers : data.users.map(normalizeUser)
+  const allUsers = filterVisibleUsers(firebaseUsers.length > 0 ? firebaseUsers : data.users.map(normalizeUser))
 
   // หา staffId ทั้งหมดที่มี config ในปีนี้ (ทุก Q)
   const allStaffIdsThisYear = [...new Set(
-    data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+    data.staffConfigs.filter((c) => c.year === selectedYear && allUsers.some((u) => u.id === c.staffId)).map((c) => c.staffId)
   )]
 
   // yearConfigs = effective config ต่อ staff สำหรับ activeQuarter

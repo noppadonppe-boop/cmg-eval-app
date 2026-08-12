@@ -7,6 +7,7 @@ import {
 import { useApp, getEffectiveConfig } from '../../context/AppContext'
 import useRBAC, { ROLE_AVATAR_BG, ROLE_BADGE_CLASSES } from '../../hooks/useRBAC'
 import { getQuarterScores, QUARTERS, PART_COLORS, PART_LABELS, PART_MAX } from '../../utils/scoreUtils'
+import { filterVisibleUsers, isDeveloperUser } from '../../utils/userUtils'
 import { ChevronDown, BarChart2, Target, CheckCircle2, Clock, XCircle } from 'lucide-react'
 
 const SCORE_COLOR = (val, max) => {
@@ -73,10 +74,11 @@ export default function Part5Quarterly() {
   const { role } = useRBAC()
   const [selectedQuarter, setSelectedQuarter] = useState('Q1')
   const [selectedStaffId, setSelectedStaffId] = useState(null)
+  const visibleUsers = filterVisibleUsers(data.users || [])
 
   // staffId ทั้งหมดในปีนี้ (ทุก Q รวมกัน, dedup)
   const allStaffIdsThisYear = [...new Set(
-    data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+    data.staffConfigs.filter((c) => c.year === selectedYear && visibleUsers.some((u) => u.id === c.staffId)).map((c) => c.staffId)
   )]
 
   const isExecOrHR = ['HR', 'HRM', 'GM', 'MD', 'MasterAdmin'].includes(role)
@@ -84,7 +86,7 @@ export default function Part5Quarterly() {
   if (isExecOrHR) {
     // แสดง staff ทุกคนในปีนี้ (dedup แล้ว)
     staffList = allStaffIdsThisYear
-      .map((id) => data.users.find((u) => u.id === id))
+      .map((id) => visibleUsers.find((u) => u.id === id))
       .filter(Boolean)
   } else {
     // ใช้ effective config ของ selectedQuarter เพื่อหา staff ที่ตัวเองเป็น Supervisor
@@ -94,16 +96,16 @@ export default function Part5Quarterly() {
     allStaffIdsThisYear.forEach((staffId) => {
       const eff = getEffectiveConfig(data.staffConfigs, staffId, selectedYear, selectedQuarter)
       if (eff?.supervisorId === currentUser.id) {
-        const u = data.users.find((u) => u.id === staffId)
+        const u = visibleUsers.find((u) => u.id === staffId)
         if (u) staffMap.set(u.id, u)
       }
     })
     staffList = [...staffMap.values()]
-    if (staffList.length === 0) staffList = [currentUser]
+    if (staffList.length === 0 && !isDeveloperUser(currentUser)) staffList = [currentUser]
   }
 
   const activeStaffId = selectedStaffId || staffList[0]?.id || null
-  const activeStaff = data.users.find((u) => u.id === activeStaffId)
+  const activeStaff = visibleUsers.find((u) => u.id === activeStaffId)
 
   // Scores for the selected staff/quarter
   const scores = activeStaffId

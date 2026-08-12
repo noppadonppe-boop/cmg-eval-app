@@ -3,11 +3,7 @@ import { db, hasConfig } from '../firebase'
 
 const COLLECTION_ID = 'CMG-eval-app'
 const ROOT_DOC_ID = 'root'
-
-export function getRootRef() {
-  if (!db) return null
-  return doc(db, COLLECTION_ID, ROOT_DOC_ID)
-}
+const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4']
 
 const DEFAULT_DATA = {
   users: [],
@@ -18,16 +14,62 @@ const DEFAULT_DATA = {
   kpis: [],
   quarterlyEvaluations: [],
   scorePartSettings: {},
+  competencyConfig: null,
+}
+
+export function getRootRef() {
+  if (!db) return null
+  return doc(db, COLLECTION_ID, ROOT_DOC_ID)
+}
+
+function isValidQuarter(q) {
+  return QUARTERS.includes(q)
+}
+
+function normalizeQuarter(q) {
+  const normalized = String(q || '').toUpperCase()
+  return isValidQuarter(normalized) ? normalized : DEFAULT_DATA.activeQuarter
+}
+
+// Older Q1 records were sometimes saved without a quarter or with lowercase
+// values. Keep those records readable by the current exact-quarter filters.
+function normalizeQuarterTaggedRecords(records) {
+  return (Array.isArray(records) ? records : []).map((record) => {
+    if (!record || typeof record !== 'object') return record
+    const normalized = normalizeQuarter(record.quarter)
+    return record.quarter === normalized ? record : { ...record, quarter: normalized }
+  })
+}
+
+function normalizeStaffConfigRecords(records) {
+  return (Array.isArray(records) ? records : []).map((record) => {
+    if (!record || typeof record !== 'object' || !record.quarter) return record
+    const normalized = normalizeQuarter(record.quarter)
+    return record.quarter === normalized ? record : { ...record, quarter: normalized }
+  })
+}
+
+function normalizeRootData(raw) {
+  const d = raw || {}
+  return {
+    users: Array.isArray(d.users) ? d.users : DEFAULT_DATA.users,
+    evaluationYears: Array.isArray(d.evaluationYears) ? d.evaluationYears : DEFAULT_DATA.evaluationYears,
+    activeYear: typeof d.activeYear === 'number' ? d.activeYear : DEFAULT_DATA.activeYear,
+    activeQuarter: normalizeQuarter(d.activeQuarter),
+    staffConfigs: normalizeStaffConfigRecords(d.staffConfigs),
+    kpis: normalizeQuarterTaggedRecords(d.kpis),
+    quarterlyEvaluations: normalizeQuarterTaggedRecords(d.quarterlyEvaluations),
+    scorePartSettings: d.scorePartSettings && typeof d.scorePartSettings === 'object' ? d.scorePartSettings : DEFAULT_DATA.scorePartSettings,
+    competencyConfig: d.competencyConfig && typeof d.competencyConfig === 'object' ? d.competencyConfig : null,
+  }
 }
 
 function toWritePayload(data) {
-  const q = String(data.activeQuarter || '').toUpperCase()
-  const activeQuarter = q === 'Q1' || q === 'Q2' || q === 'Q3' || q === 'Q4' ? q : 'Q1'
   return {
     users: data.users ?? [],
     evaluationYears: data.evaluationYears ?? [],
     activeYear: typeof data.activeYear === 'number' ? data.activeYear : null,
-    activeQuarter,
+    activeQuarter: normalizeQuarter(data.activeQuarter),
     staffConfigs: data.staffConfigs ?? [],
     kpis: data.kpis ?? [],
     quarterlyEvaluations: data.quarterlyEvaluations ?? [],
@@ -36,84 +78,332 @@ function toWritePayload(data) {
   }
 }
 
-export function parseSnapshot(snap) {
-  if (!snap?.exists?.()) return null
-  const d = snap.data()
-  const q = String(d.activeQuarter || '').toUpperCase()
-  const activeQuarter = q === 'Q1' || q === 'Q2' || q === 'Q3' || q === 'Q4' ? q : DEFAULT_DATA.activeQuarter
+function getQuarterDocRef(year, quarter) {
+  if (!db || !year || !isValidQuarter(quarter) || quarter === 'Q1') return null
+  return doc(db, COLLECTION_ID, ROOT_DOC_ID, `${quarter}_${year}`, 'data')
+}
+
+function getQuarterNumber(quarter) {
+  return QUARTERS.indexOf(quarter) + 1
+}
+
+function isRecordForQuarter(record, year, quarter) {
+  return record?.year === year && normalizeQuarter(record?.quarter) === quarter
+}
+
+function isLegacyQ1Record(record) {
+  return !record?.quarter || String(record.quarter).toUpperCase() === 'Q1'
+}
+
+function mergeRecords(lists) {
+  const result = []
+  const seenIds = new Set()
+  for (const list of lists) {
+    for (const record of Array.isArray(list) ? list : []) {
+      if (record?.id) {
+        if (seenIds.has(record.id)) continue
+        seenIds.add(record.id)
+      }
+      result.push(record)
+    }
+  }
+  return result
+}
+
+function quarterPayloadFromRoot(rootData, year, quarter) {
   return {
-    users: Array.isArray(d.users) ? d.users : DEFAULT_DATA.users,
-    evaluationYears: Array.isArray(d.evaluationYears) ? d.evaluationYears : DEFAULT_DATA.evaluationYears,
-    activeYear: typeof d.activeYear === 'number' ? d.activeYear : DEFAULT_DATA.activeYear,
-    activeQuarter,
-    staffConfigs: Array.isArray(d.staffConfigs) ? d.staffConfigs : DEFAULT_DATA.staffConfigs,
-    kpis: Array.isArray(d.kpis) ? d.kpis : DEFAULT_DATA.kpis,
-    quarterlyEvaluations: Array.isArray(d.quarterlyEvaluations) ? d.quarterlyEvaluations : DEFAULT_DATA.quarterlyEvaluations,
-    scorePartSettings: d.scorePartSettings && typeof d.scorePartSettings === 'object' ? d.scorePartSettings : DEFAULT_DATA.scorePartSettings,
+    staffConfigs: rootData.staffConfigs.filter((record) => isRecordForQuarter(record, year, quarter)),
+    kpis: rootData.kpis.filter((record) => isRecordForQuarter(record, year, quarter)),
+    quarterlyEvaluations: rootData.quarterlyEvaluations.filter((record) => isRecordForQuarter(record, year, quarter)),
+    scorePartSettings: rootData.scorePartSettings?.[year] ?? rootData.scorePartSettings?.[String(year)] ?? null,
+    competencyConfig: rootData.competencyConfig ?? null,
+  }
+}
+
+function parseQuarterSnapshot(snap, fallback) {
+  if (!snap?.exists?.()) return fallback
+  const d = snap.data() || {}
+  return {
+    staffConfigs: normalizeStaffConfigRecords(d.staffConfigs),
+    kpis: normalizeQuarterTaggedRecords(d.kpis),
+    quarterlyEvaluations: normalizeQuarterTaggedRecords(d.quarterlyEvaluations),
+    scorePartSettings: d.scorePartSettings && typeof d.scorePartSettings === 'object' ? d.scorePartSettings : null,
     competencyConfig: d.competencyConfig && typeof d.competencyConfig === 'object' ? d.competencyConfig : null,
   }
 }
 
+function mergeQuarterData(rootData, quarterData, year) {
+  const quarterDataList = Array.isArray(quarterData) ? quarterData : []
+  const mergedScoreSettings = { ...(rootData.scorePartSettings || {}) }
+  let mergedCompetencyConfig = rootData.competencyConfig
+
+  for (const data of quarterDataList) {
+    if (data?.scorePartSettings) mergedScoreSettings[year] = data.scorePartSettings
+    if (data?.competencyConfig) mergedCompetencyConfig = data.competencyConfig
+  }
+
+  return {
+    ...rootData,
+    staffConfigs: mergeRecords([
+      ...quarterDataList.map((data) => data.staffConfigs),
+      rootData.staffConfigs,
+    ]),
+    kpis: mergeRecords([
+      ...quarterDataList.map((data) => data.kpis),
+      rootData.kpis,
+    ]),
+    quarterlyEvaluations: mergeRecords([
+      ...quarterDataList.map((data) => data.quarterlyEvaluations),
+      rootData.quarterlyEvaluations,
+    ]),
+    scorePartSettings: mergedScoreSettings,
+    competencyConfig: mergedCompetencyConfig,
+  }
+}
+
+function getEffectiveActiveYear(data) {
+  const years = Array.isArray(data?.evaluationYears) ? data.evaluationYears : []
+  if (years.length === 0) return null
+  const fallback = Math.max(...years)
+  return typeof data?.activeYear === 'number' && years.includes(data.activeYear)
+    ? data.activeYear
+    : fallback
+}
+
+function getActiveTarget(data, target) {
+  const year = typeof target?.year === 'number' ? target.year : getEffectiveActiveYear(data)
+  const quarter = normalizeQuarter(target?.quarter || data?.activeQuarter)
+  return { year, quarter }
+}
+
+function rootPayloadAfterQuarterUpdate(rootData, next, target) {
+  const maxLoadedQuarter = getQuarterNumber(target.quarter)
+  const staysInRoot = (record) => {
+    if (isLegacyQ1Record(record) || record?.year !== target.year) return true
+    return getQuarterNumber(normalizeQuarter(record.quarter)) > maxLoadedQuarter
+  }
+  const mergeRootField = (field) => mergeRecords([
+    (next[field] || []).filter(staysInRoot),
+    (rootData[field] || []).filter(staysInRoot),
+  ])
+  const rootScorePartSettings = { ...(next.scorePartSettings || {}) }
+  const targetYearKey = String(target.year)
+  if (Object.prototype.hasOwnProperty.call(rootData.scorePartSettings || {}, targetYearKey)) {
+    rootScorePartSettings[targetYearKey] = rootData.scorePartSettings[targetYearKey]
+  } else if (Object.prototype.hasOwnProperty.call(rootData.scorePartSettings || {}, target.year)) {
+    rootScorePartSettings[target.year] = rootData.scorePartSettings[target.year]
+  } else {
+    delete rootScorePartSettings[targetYearKey]
+    delete rootScorePartSettings[target.year]
+  }
+
+  return toWritePayload({
+    ...rootData,
+    users: next.users,
+    evaluationYears: next.evaluationYears,
+    activeYear: next.activeYear,
+    activeQuarter: next.activeQuarter,
+    staffConfigs: mergeRootField('staffConfigs'),
+    kpis: mergeRootField('kpis'),
+    quarterlyEvaluations: mergeRootField('quarterlyEvaluations'),
+    // The active year's setting belongs to the quarter document; keep all
+    // other years in root so actions such as Add Year are not lost.
+    scorePartSettings: rootScorePartSettings,
+    // Competency configuration is copied to each Q2+ document when it is first
+    // opened; root remains the legacy Q1 configuration.
+    competencyConfig: rootData.competencyConfig,
+  })
+}
+
+function quarterPayloadAfterUpdate(data, year, quarter) {
+  const scorePartSettings = data.scorePartSettings?.[year] ?? data.scorePartSettings?.[String(year)] ?? null
+  return {
+    staffConfigs: (data.staffConfigs || []).filter((record) => isRecordForQuarter(record, year, quarter)),
+    kpis: (data.kpis || []).filter((record) => isRecordForQuarter(record, year, quarter)),
+    quarterlyEvaluations: (data.quarterlyEvaluations || []).filter((record) => isRecordForQuarter(record, year, quarter)),
+    scorePartSettings,
+    competencyConfig: data.competencyConfig ?? null,
+  }
+}
+
+export function parseSnapshot(snap) {
+  if (!snap?.exists?.()) return null
+  return normalizeRootData(snap.data())
+}
+
 /**
- * Subscribe to the root document. Callback receives parsed data or null if doc missing.
- * Returns unsubscribe function.
+ * Subscribe to root plus the active year's Q2-Q4 collections. Q1 remains in root.
+ * Missing quarter documents are lazily created from the legacy root data.
  */
-export function subscribeToRoot(callback) {
+export function subscribeToApp(callback) {
   if (!hasConfig || !db) {
     callback(null)
     return () => {}
   }
-  const ref = getRootRef()
-  return onSnapshot(
-    ref,
-    (snap) => callback(parseSnapshot(snap)),
+
+  let quarterUnsubs = []
+  let subscriptionId = 0
+
+  const clearQuarterSubscriptions = () => {
+    quarterUnsubs.forEach((unsubscribe) => unsubscribe())
+    quarterUnsubs = []
+  }
+
+  const unsubscribeRoot = onSnapshot(
+    getRootRef(),
+    (snap) => {
+      const rootData = parseSnapshot(snap)
+      clearQuarterSubscriptions()
+      subscriptionId += 1
+      const currentSubscription = subscriptionId
+
+      if (!rootData) {
+        callback(null)
+        return
+      }
+
+      const { year, quarter } = getActiveTarget(rootData)
+      if (!year || quarter === 'Q1') {
+        callback(rootData)
+        return
+      }
+
+      const quarterNumbers = Array.from({ length: getQuarterNumber(quarter) - 1 }, (_, index) => index + 2)
+      const quarterStates = quarterNumbers.map((number) => {
+        const q = QUARTERS[number - 1]
+        return {
+          quarter: q,
+          data: quarterPayloadFromRoot(rootData, year, q),
+        }
+      })
+
+      const emit = () => {
+        if (currentSubscription !== subscriptionId) return
+        callback(mergeQuarterData(rootData, quarterStates.map((state) => state.data), year))
+      }
+
+      // Render immediately from legacy data while the listeners and migration settle.
+      emit()
+
+      quarterStates.forEach((state) => {
+        const ref = getQuarterDocRef(year, state.quarter)
+        const unsubscribe = onSnapshot(
+          ref,
+          (quarterSnap) => {
+            if (currentSubscription !== subscriptionId) return
+            state.data = parseQuarterSnapshot(quarterSnap, state.data)
+            emit()
+            if (!quarterSnap.exists()) {
+              ensureQuarterData(year, state.quarter).catch((error) => {
+                console.error(`Firestore migration error for ${state.quarter}_${year}:`, error)
+              })
+            }
+          },
+          (error) => {
+            console.error(`Firestore quarter subscribe error for ${state.quarter}_${year}:`, error)
+            emit()
+          }
+        )
+        quarterUnsubs.push(unsubscribe)
+      })
+    },
     (err) => {
       console.error('Firestore subscribe error:', err)
       callback(null)
     }
   )
+
+  return () => {
+    clearQuarterSubscriptions()
+    subscriptionId += 1
+    unsubscribeRoot()
+  }
 }
 
-/**
- * Write full app data to root document. All users share this doc.
- */
+/** Backward-compatible name for callers that only need the root subscription. */
+export const subscribeToRoot = subscribeToApp
+
 export async function writeRoot(data) {
   if (!db) return
-  const ref = getRootRef()
-  await setDoc(ref, toWritePayload(data))
+  await setDoc(getRootRef(), toWritePayload(data))
 }
 
-/**
- * Apply an update via Transaction: read current doc, apply updater(current), write.
- * Prevents one user's save from overwriting another's — merges with latest Firestore state.
- * @param { (current: object) => object } updater - receives current doc, returns new doc
- */
-export async function persistUpdate(updater) {
-  if (!db) return
-  const ref = getRootRef()
-  return runTransaction(db, async (transaction) => {
-    const snap = await transaction.get(ref)
-    const current = parseSnapshot(snap) ?? DEFAULT_DATA
-    const next = updater(current)
-    transaction.set(ref, toWritePayload(next))
-    return next
+async function ensureQuarterData(year, quarter) {
+  const quarterRef = getQuarterDocRef(year, quarter)
+  if (!quarterRef) return
+  await runTransaction(db, async (transaction) => {
+    const [rootSnap, quarterSnap] = await Promise.all([
+      transaction.get(getRootRef()),
+      transaction.get(quarterRef),
+    ])
+    const rootData = parseSnapshot(rootSnap) ?? DEFAULT_DATA
+    if (!quarterSnap.exists()) {
+      transaction.set(quarterRef, quarterPayloadFromRoot(rootData, year, quarter))
+    }
+
+    // Once the quarter document is present, remove that quarter's legacy
+    // records from root. Q1 records and global fields remain untouched.
+    const removeMigratedQuarter = (field) => (rootData[field] || [])
+      .filter((record) => !isRecordForQuarter(record, year, quarter))
+    transaction.set(getRootRef(), toWritePayload({
+      ...rootData,
+      staffConfigs: removeMigratedQuarter('staffConfigs'),
+      kpis: removeMigratedQuarter('kpis'),
+      quarterlyEvaluations: removeMigratedQuarter('quarterlyEvaluations'),
+    }))
   })
 }
 
 /**
- * Seed root document with initial mock data if it doesn't exist or is empty.
+ * Apply an update transactionally. Q1 writes remain in root; Q2+ writes are
+ * split between the legacy root (Q1/global fields) and root/{Qx_year}/data.
  */
+export async function persistUpdate(updater, target = null) {
+  if (!db) return
+  const rootRef = getRootRef()
+  const requestedTarget = target
+
+  return runTransaction(db, async (transaction) => {
+    const rootSnap = await transaction.get(rootRef)
+    const rootData = parseSnapshot(rootSnap) ?? DEFAULT_DATA
+    const effectiveTarget = getActiveTarget(rootData, requestedTarget)
+
+    if (!effectiveTarget.year || effectiveTarget.quarter === 'Q1') {
+      const current = rootData
+      const next = updater(current)
+      transaction.set(rootRef, toWritePayload(next))
+      return next
+    }
+
+    const quarterNumbers = Array.from({ length: getQuarterNumber(effectiveTarget.quarter) - 1 }, (_, index) => index + 2)
+    const quarterRefs = quarterNumbers.map((number) => getQuarterDocRef(effectiveTarget.year, QUARTERS[number - 1]))
+    const quarterSnaps = []
+    for (const quarterRef of quarterRefs) {
+      quarterSnaps.push(await transaction.get(quarterRef))
+    }
+    const quarterData = quarterSnaps.map((snap, index) => parseQuarterSnapshot(
+      snap,
+      quarterPayloadFromRoot(rootData, effectiveTarget.year, QUARTERS[quarterNumbers[index] - 1])
+    ))
+    const current = mergeQuarterData(rootData, quarterData, effectiveTarget.year)
+    const next = updater(current)
+
+    transaction.set(rootRef, rootPayloadAfterQuarterUpdate(rootData, next, effectiveTarget))
+    transaction.set(
+      getQuarterDocRef(effectiveTarget.year, effectiveTarget.quarter),
+      quarterPayloadAfterUpdate(next, effectiveTarget.year, effectiveTarget.quarter)
+    )
+    return next
+  })
+}
+
 export async function seedIfEmpty(initialData) {
   if (!db) return
   const ref = getRootRef()
   const snap = await getDoc(ref)
   const existing = parseSnapshot(snap)
-  const isEmpty = !existing || 
-    !existing.users?.length || 
-    !existing.evaluationYears?.length
-  if (isEmpty) {
-    await writeRoot(initialData)
-  }
+  const isEmpty = !existing || !existing.users?.length || !existing.evaluationYears?.length
+  if (isEmpty) await writeRoot(initialData)
 }
 
 export { hasConfig }

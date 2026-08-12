@@ -7,8 +7,9 @@ import Part2Acknowledgment from '../components/eval/Part2Acknowledgment'
 import Part3KpiEval from '../components/eval/Part3KpiEval'
 import Part4JobDescription from '../components/eval/Part4JobDescription'
 import StaffMiniCard from '../components/eval/StaffMiniCard'
-import { ClipboardList, User, Users, Briefcase, Shield, Target, ChevronDown, ShieldOff } from 'lucide-react'
+import { ClipboardList, User, Users, Briefcase, Shield, Target, ChevronDown, ShieldOff, Trash2 } from 'lucide-react'
 import { getQuarterScores } from '../utils/scoreUtils'
+import { filterVisibleUsers, isDeveloperUser } from '../utils/userUtils'
 
 function StaffSelector({ staffList, value, onChange }) {
   const [open, setOpen] = useState(false)
@@ -74,11 +75,11 @@ function useEvalAccess() {
     return unsub
   }, [])
 
-  const allUsers = firebaseUsers.length > 0 ? firebaseUsers : data.users
+  const allUsers = filterVisibleUsers(firebaseUsers.length > 0 ? firebaseUsers : data.users)
 
   // หา staffId ทั้งหมดในปีนี้ แล้วสร้าง yearConfigs จาก effective config ของ activeQuarter
   const allStaffIdsThisYear = [...new Set(
-    data.staffConfigs.filter((c) => c.year === selectedYear).map((c) => c.staffId)
+    data.staffConfigs.filter((c) => c.year === selectedYear && allUsers.some((u) => u.id === c.staffId)).map((c) => c.staffId)
   )]
   const yearConfigs = allStaffIdsThisYear
     .map((staffId) => getEffectiveConfig(data.staffConfigs, staffId, selectedYear, activeQuarter))
@@ -94,7 +95,7 @@ function useEvalAccess() {
     .map((c) => allUsers.find((u) => u.id === c.staffId))
     .filter(Boolean)
 
-  const isAssignedAsStaff = yearConfigs.some((c) => c.staffId === currentUser.id)
+  const isAssignedAsStaff = !isDeveloperUser(currentUser) && yearConfigs.some((c) => c.staffId === currentUser.id)
   const isSupervisor = supervisedStaff.length > 0
   const isStakeholder = stakeholderStaff.length > 0
   const hasAllStaffAccess = ['MasterAdmin', 'HR', 'HRM', 'MD', 'GM'].includes(role)
@@ -153,9 +154,10 @@ const PART_TAB_ACTIVE = {
 }
 
 export default function EvalPage() {
-  const { selectedYear, activeQuarter, currentUser, data, getEvaluation, getEvaluationForPart } = useApp()
-  const { role: rawRole } = useRBAC() // not used directly for rendering rules anymore to prevent overriding contextual mode
+  const { selectedYear, activeQuarter, currentUser, data, getEvaluation, getEvaluationForPart, removeEvaluation } = useApp()
+  const { isRole } = useRBAC()
   const { parts, role, isSupervisor, isStakeholder, isAssignedAsStaff, supervisedStaff, stakeholderStaff, allStaffList, hasAllStaffAccess, getEvaluatorRole, allUsers, yearConfigs } = useEvalAccess()
+  const canDeleteEvaluation = isRole('MasterAdmin')
 
   const [activePart, setActivePart] = useState(null)
   const [selectedStaff, setSelectedStaff] = useState('')
@@ -185,11 +187,11 @@ export default function EvalPage() {
     )
     const kpiSetAndAcceptedAll3 = quarterKpis.length === 3 && quarterKpis.every((k) => k.status === 'Accepted')
 
-    const staff = (allUsers || []).find((u) => u.id === staffId) || (data.users || []).find((u) => u.id === staffId) || null
+    const staff = (allUsers || []).find((u) => u.id === staffId) || null
     const jdAttachmentSet = !!staff?.jdUrl?.trim()
 
     const cfg = (yearConfigs || []).find((c) => c.staffId === staffId) || null
-    const knownIds = new Set([...(allUsers || []).map((u) => u.id), ...(data.users || []).map((u) => u.id)])
+    const knownIds = new Set((allUsers || []).map((u) => u.id))
 
     const supervisorId = cfg?.supervisorId || ''
     const supervisorSet = !!supervisorId && supervisorId !== staffId && knownIds.has(supervisorId)
@@ -727,9 +729,29 @@ export default function EvalPage() {
                               <span className="mx-1 text-gray-300">·</span>
                               ผู้ประเมิน: {e.evaluatorRole || '—'}
                             </span>
-                            <span className="inline-flex items-center gap-1.5 text-sm font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
-                              <span>{e.scaledScore ?? e.rawTotal ?? e.score ?? '—'}</span>
-                            </span>
+                            <div className="inline-flex items-center gap-2">
+                              {canDeleteEvaluation && (
+                                <button
+                                  type="button"
+                                  title="ลบรายการประเมินนี้"
+                                  aria-label={`ลบรายการประเมินของ ${e.evaluatorRole || 'ผู้ประเมิน'}`}
+                                  className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                                  onClick={() => {
+                                    const evaluator = allUsers.find((u) => u.id === e.evaluatorId)
+                                    const evaluatorName = getDisplayName(evaluator) || e.evaluatorRole || 'ผู้ประเมิน'
+                                    const confirmed = window.confirm(
+                                      `ยืนยันลบรายการประเมินของ ${evaluatorName} (${e.evaluatorRole || 'ผู้ประเมิน'}) ใช่หรือไม่?\n\nเมื่อลบแล้ว ผู้ประเมินคนนี้จะต้องประเมินรายการนี้ใหม่`
+                                    )
+                                    if (confirmed) removeEvaluation(e)
+                                  }}
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              )}
+                              <span className="inline-flex items-center gap-1.5 text-sm font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                                <span>{e.scaledScore ?? e.rawTotal ?? e.score ?? '—'}</span>
+                              </span>
+                            </div>
                           </div>
                           {getEvaluationComments(e).length > 0 && (
                             <div className="mt-2 space-y-1.5">

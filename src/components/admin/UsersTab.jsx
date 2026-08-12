@@ -4,6 +4,7 @@ import { subscribeAllUsers, updateUserProfile, ALL_ROLES } from '../../services/
 import { useAuth } from '../../context/AuthContext'
 import useRBAC from '../../hooks/useRBAC'
 import { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../../hooks/useRBAC'
+import { ALL_POSITIONS, normalizePositions } from '../../utils/userUtils'
 import {
   UserPlus, Pencil, Trash2, Check, X, AlertCircle, ExternalLink,
   IdCard, Mail, Link2, Loader, Search, Users, ChevronDown,
@@ -13,21 +14,10 @@ import {
 // ── Legacy Evaluation System Users (data.users) ────────────────────────────────
 const ROLES = ['Staff', 'HR', 'HRM', 'GM', 'MD']
 const BLANK_FORM = { name: '', role: 'Staff', staffCode: '', jdUrl: '' }
-const ALL_POSITIONS = ['Staff', 'Supervisor']
-
 const POSITION_BADGE = {
   Staff:      'bg-blue-100 text-blue-800 ring-blue-200',
   Supervisor: 'bg-purple-100 text-purple-800 ring-purple-200',
-}
-
-function normalizePositions(user) {
-  if (Array.isArray(user?.positions) && user.positions.length > 0) return user.positions
-  const roles = Array.isArray(user?.roles) ? user.roles : [user?.role].filter(Boolean)
-  const hasStaff = roles.includes('Staff')
-  const hasNonStaff = roles.some((r) => r && r !== 'Staff')
-  if (hasStaff && hasNonStaff) return ['Staff', 'Supervisor']
-  if (hasNonStaff) return ['Supervisor']
-  return ['Staff']
+  Developer:  'bg-amber-100 text-amber-800 ring-amber-200',
 }
 
 const STATUS_BADGE = {

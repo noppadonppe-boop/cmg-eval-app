@@ -24,6 +24,50 @@ function avg(values) {
  */
 const PART4_WEIGHTS = { Staff: 0.20, Supervisor: 0.50, Stakeholder: 0.30 }
 
+const QUARTER_ORDER = { Q1: 1, Q2: 2, Q3: 3, Q4: 4 }
+
+function getEffectiveStaffConfig(data, staffId, year, quarter) {
+  const configs = data?.staffConfigs ?? []
+  const q = String(quarter || '').toUpperCase()
+  const qOrder = QUARTER_ORDER[q] || 0
+
+  if (qOrder > 0) {
+    const exact = configs.find((c) => c.staffId === staffId && c.year === year && c.quarter === q)
+    if (exact) return exact
+    for (let i = qOrder - 1; i >= 1; i -= 1) {
+      const previousQuarter = Object.keys(QUARTER_ORDER).find((key) => QUARTER_ORDER[key] === i)
+      const previous = configs.find((c) => c.staffId === staffId && c.year === year && c.quarter === previousQuarter)
+      if (previous) return previous
+    }
+  }
+
+  return configs.find((c) => c.staffId === staffId && c.year === year && !c.quarter) || null
+}
+
+function hasScoredEvaluation(evals, part, evaluatorId = null, evaluatorRoles = []) {
+  return evals.some((e) => {
+    if (e.part !== part || (e.rawTotal == null && e.scaledScore == null && e.score == null)) return false
+    if (evaluatorId != null && e.evaluatorId !== evaluatorId) return false
+    return evaluatorRoles.length === 0 || evaluatorRoles.includes(e.evaluatorRole)
+  })
+}
+
+function hasCompleteEvaluatorSet(data, evals, staffId, year, quarter, part) {
+  const config = getEffectiveStaffConfig(data, staffId, year, quarter)
+  if (!config) return false
+
+  const supervisorComplete = hasScoredEvaluation(evals, part, config.supervisorId, ['Supervisor', 'HR'])
+  const stakeholderIds = [...new Set((config.stakeholderIds || []).filter(Boolean))]
+  const stakeholdersComplete = stakeholderIds.every((id) => hasScoredEvaluation(evals, part, id, ['Stakeholder']))
+
+  return (
+    hasScoredEvaluation(evals, part, staffId, ['Staff']) &&
+    !!config.supervisorId &&
+    supervisorComplete &&
+    stakeholdersComplete
+  )
+}
+
 export const DEFAULT_SCORE_PART_USAGE = {
   part1: true,
   part2: true,
@@ -55,7 +99,7 @@ export function getQuarterScores(data, staffId, year, quarter) {
   // Part 1 — Competency (30 pts): weighted average by evaluator role
   const p1Evals = evals.filter((e) => e.part === 'part1')
   let part1 = null
-  if (p1Evals.length > 0) {
+  if (p1Evals.length > 0 && hasCompleteEvaluatorSet(data, evals, staffId, year, quarter, 'part1')) {
     let weightedSum = 0
     const rawByRole = {
       Staff: [],
@@ -94,7 +138,11 @@ export function getQuarterScores(data, staffId, year, quarter) {
   const p3Staff = evals.find((e) => e.part === 'part3_staff' && e.evaluatorRole === 'Staff')
   const p3Sup   = evals.find((e) => e.part === 'part3_sup'   && e.evaluatorRole === 'Supervisor')
   let part3 = null
-  if (p3Staff != null || p3Sup != null) {
+  const p3Config = getEffectiveStaffConfig(data, staffId, year, quarter)
+  const p3Complete = hasScoredEvaluation(evals, 'part3_staff', staffId, ['Staff']) &&
+    !!p3Config?.supervisorId &&
+    hasScoredEvaluation(evals, 'part3_sup', p3Config.supervisorId, ['Supervisor'])
+  if (p3Complete && p3Staff != null && p3Sup != null) {
     const staffRaw = p3Staff?.rawTotal ?? null
     const supRaw   = p3Sup?.rawTotal   ?? null
     if (staffRaw !== null && supRaw !== null) {
@@ -109,7 +157,7 @@ export function getQuarterScores(data, staffId, year, quarter) {
   // Part 4 — JD (20 pts): weighted average Staff×20% + Supervisor×50% + Stakeholder×30%
   const p4Evals = evals.filter((e) => e.part === 'part4')
   let part4 = null
-  if (p4Evals.length > 0) {
+  if (p4Evals.length > 0 && hasCompleteEvaluatorSet(data, evals, staffId, year, quarter, 'part4')) {
     let weightedSum = 0
     let totalWeight = 0
     p4Evals.forEach((e) => {
@@ -134,7 +182,7 @@ export function getQuarterScores(data, staffId, year, quarter) {
     .filter((s) => includedParts[s.key] && s.value !== null)
     .map((s) => s.value)
   const total =
-    filled.length > 0
+    filled.length === scores.filter((s) => includedParts[s.key]).length && filled.length > 0
       ? Math.round(filled.reduce((s, v) => s + v, 0) * 100) / 100
       : null
 
