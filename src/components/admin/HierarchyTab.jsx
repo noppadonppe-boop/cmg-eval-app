@@ -505,7 +505,12 @@ export default function HierarchyTab() {
                 {evaluatableUsers.map((u) => {
                   const cnt = staffStakeholderCount(u.id)
                   return (
-                    <option key={u.id} value={u.id}>
+                    <option
+                      key={u.id}
+                      value={u.id}
+                      className={cnt >= 3 ? 'text-gray-400 bg-gray-50' : 'text-gray-900'}
+                      style={cnt >= 3 ? { color: '#9ca3af' } : undefined}
+                    >
                       {u.name} ({cnt}/3)
                     </option>
                   )
