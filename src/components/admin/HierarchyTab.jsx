@@ -178,9 +178,21 @@ export default function HierarchyTab() {
     .filter((u) => CAN_BE_STAKEHOLDER_ROLES.includes(u.role))
     .sort(sortByName)
 
+  // A config can contain an old/deleted user or a user whose role is no longer
+  // eligible to be a Stakeholder. Do not let those stale ids consume one of
+  // the three selectable slots.
+  const normalizeStakeholderIds = (ids, staffId = '') => {
+    const allowedIds = new Set(
+      stakeholderCandidates
+        .filter((u) => u.id !== staffId)
+        .map((u) => u.id)
+    )
+    return [...new Set((Array.isArray(ids) ? ids : []).filter((id) => allowedIds.has(id)))]
+  }
+
   const staffStakeholderCount = (id) => {
     const cfg = yearConfigs.find((c) => c.staffId === id)
-    return (cfg?.stakeholderIds || []).length
+    return normalizeStakeholderIds(cfg?.stakeholderIds, id).length
   }
 
   const getUserById = (id) => allUsers.find((u) => u.id === id)
@@ -227,8 +239,9 @@ export default function HierarchyTab() {
   })
 
   // Req 5: Cross disable forms
+  const normalizedSelectedStakeholderIds = normalizeStakeholderIds(stakeholderIds, stakeStaffId)
   const isSupActive = supSupervisorId !== '' || supStaffIds.length > 0
-  const isStakeActive = stakeStaffId !== '' || stakeholderIds.length > 0
+  const isStakeActive = stakeStaffId !== '' || normalizedSelectedStakeholderIds.length > 0
 
   const upsertStaffConfig = (staffId, updates) => {
     // หา Q-specific config สำหรับ activeQuarter
@@ -288,12 +301,12 @@ export default function HierarchyTab() {
 
   const applyStakeholders = () => {
     if (!stakeStaffId) { setError('เลือก Staff'); return }
-    if (stakeholderIds.length > 3) { setError('Stakeholders เลือกได้สูงสุด 3 คน'); return }
-    if (stakeholderIds.includes(stakeStaffId)) { setError('Staff ไม่สามารถเป็น Stakeholder ของตัวเอง'); return }
+    const normalizedStakeholderIds = normalizeStakeholderIds(stakeholderIds, stakeStaffId)
+    if (normalizedStakeholderIds.length > 3) { setError('Stakeholders เลือกได้สูงสุด 3 คน'); return }
     const cfg = yearConfigs.find((c) => c.staffId === stakeStaffId)
     upsertStaffConfig(stakeStaffId, {
       supervisorId: cfg?.supervisorId || '',
-      stakeholderIds,
+      stakeholderIds: normalizedStakeholderIds,
       leaveQuota: cfg?.leaveQuota ?? DEFAULT_LEAVE_QUOTA,
     })
     // Req 2: Clear after save
@@ -339,7 +352,7 @@ export default function HierarchyTab() {
     setLoadedSupStaffIds([])
     setSupEditSource('')
     setStakeStaffId(cfg.staffId || '')
-    setStakeholderIds(cfg.stakeholderIds || [])
+    setStakeholderIds(normalizeStakeholderIds(cfg.stakeholderIds, cfg.staffId))
     setLeaveStaffId(cfg.staffId || '')
     setLeaveQuota(cfg.leaveQuota ?? DEFAULT_LEAVE_QUOTA)
     setError('')
@@ -467,7 +480,7 @@ export default function HierarchyTab() {
               <p className="text-[11px] text-gray-500 mt-0.5">ปี {selectedYear} · <span className="font-bold text-indigo-600">{activeQuarter}</span> · เลือกได้สูงสุด 3 คน · ซ้ำกับคนอื่นได้</p>
             </div>
             <div className="px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 text-[11px] text-gray-500">
-              {stakeholderIds.length}/3
+              {normalizedSelectedStakeholderIds.length}/3
             </div>
           </div>
 
@@ -483,7 +496,7 @@ export default function HierarchyTab() {
                   const id = e.target.value
                   setStakeStaffId(id)
                   const cfg = yearConfigs.find((c) => c.staffId === id)
-                  setStakeholderIds(cfg?.stakeholderIds || [])
+                  setStakeholderIds(normalizeStakeholderIds(cfg?.stakeholderIds, id))
                   setError('')
                 }}
                 className="w-full px-2.5 py-2 rounded-lg border border-gray-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
@@ -507,15 +520,15 @@ export default function HierarchyTab() {
               <MultiSelect
                 disabled={isSupActive}
                 options={stakeholderCandidates.filter((u) => u.id !== stakeStaffId)}
-                selected={stakeholderIds}
-                onChange={(ids) => { setStakeholderIds(ids); setError('') }}
+                selected={normalizedSelectedStakeholderIds}
+                onChange={(ids) => { setStakeholderIds(normalizeStakeholderIds(ids, stakeStaffId)); setError('') }}
                 placeholder="เลือก Stakeholder..."
                 maxSelected={3}
               />
             </div>
 
             <div className="flex items-center gap-2 justify-end">
-              {stakeholderIds.length > 0 && (
+              {normalizedSelectedStakeholderIds.length > 0 && (
                 <button
                   type="button"
                   onClick={() => { setStakeholderIds([]); setStakeStaffId('') }}
