@@ -4,22 +4,28 @@ import useRBAC, { ROLE_BADGE_CLASSES, ROLE_AVATAR_BG } from '../hooks/useRBAC'
 import { subscribeAllUsers } from '../services/authService'
 import { filterVisibleUsers, isDeveloperUser } from '../utils/userUtils'
 import {
+  getKpiMaxPerItem,
+  getScorableKpis,
+  isKpiScorable,
+  isKpiSetupReady,
+  isKpiSkipped,
+  KPI_MAX_PER_QUARTER,
+  KPI_TOTAL_SCORE,
+} from '../utils/kpiUtils'
+import {
   Target, PlusCircle, CheckCircle2, XCircle, Clock, Pencil, Trash2,
   AlertCircle, Check, X, Filter, Eye, Info, Users, UserCircle2,
   ChevronDown, ChevronUp, Copy
 } from 'lucide-react'
 
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4']
-const KPI_MAX_PER_QUARTER = 3
-const KPI_TOTAL_SCORE = 30
-
-// Points per item = KPI_TOTAL_SCORE ÷ number of KPIs assigned (dynamic)
-const kpiMaxPerItem = (count) => (count > 0 ? KPI_TOTAL_SCORE / count : KPI_TOTAL_SCORE)
+const kpiMaxPerItem = getKpiMaxPerItem
 
 const STATUS_STYLES = {
   Pending:  { bg: 'bg-yellow-50',  text: 'text-yellow-700',  ring: 'ring-yellow-200',  icon: <Clock size={12} />, label: 'รอยืนยัน' },
   Accepted: { bg: 'bg-green-50',   text: 'text-green-700',   ring: 'ring-green-200',   icon: <CheckCircle2 size={12} />, label: 'ยอมรับแล้ว' },
   Rejected: { bg: 'bg-red-50',     text: 'text-red-700',     ring: 'ring-red-200',     icon: <XCircle size={12} />, label: 'ปฏิเสธ' },
+  Skipped:  { bg: 'bg-gray-100',   text: 'text-gray-600',   ring: 'ring-gray-300',   icon: <X size={12} />, label: 'Skip / Ignore' },
 }
 
 const BLANK_FORM = {
@@ -60,6 +66,14 @@ function StatusBadge({ status }) {
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ring-1 ${s.bg} ${s.text} ${s.ring}`}>
       {s.icon}{s.label || status}
+    </span>
+  )
+}
+
+function SkippedBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ring-1 bg-gray-100 text-gray-600 ring-gray-300">
+      <X size={12} /> Skip / Ignore (ไม่นับคะแนน)
     </span>
   )
 }
@@ -315,7 +329,7 @@ function SupervisorView({ allUsers }) {
         <Info size={14} className="shrink-0 mt-0.5 text-blue-500" />
         <div>
           <strong>Part 3 — KPI (30 คะแนน):</strong> กำหนด KPI สูงสุด {KPI_MAX_PER_QUARTER} ข้อ/คน/Quarter
-          · คะแนนต่อข้อ: <strong>1 ข้อ = 30 คะแนน · 2 ข้อ = 15 คะแนน · 3 ข้อ = 10 คะแนน</strong>
+          · คะแนนต่อข้อ: <strong>1 ข้อ = {KPI_TOTAL_SCORE} คะแนน · 2 ข้อ = {KPI_TOTAL_SCORE / 2} คะแนน · 3 ข้อ = {KPI_TOTAL_SCORE / 3} คะแนน</strong>
           · Staff 40% + Supervisor 60% · สูตร: Staff_total×0.40 + Sup_total×0.60
         </div>
       </div>
@@ -342,11 +356,10 @@ function SupervisorView({ allUsers }) {
       {/* KPI list grouped by staff */}
       {myStaff.filter(s => filterStaff === 'all' || s.id === filterStaff).map((staff) => {
         const staffKpis = filteredByQuarter.filter(k => k.staffId === staff.id)
-        const accepted = staffKpis.filter(k => k.status === 'Accepted')
-        const pending = staffKpis.filter(k => k.status === 'Pending')
-        const rejected = staffKpis.filter(k => k.status === 'Rejected')
-        const kpiCount = staffKpis.length
-        const maxPerItem = kpiMaxPerItem(kpiCount)
+        const accepted = getScorableKpis(staffKpis)
+        const pending = staffKpis.filter(k => !isKpiSkipped(k) && k.status === 'Pending')
+        const rejected = staffKpis.filter(k => !isKpiSkipped(k) && k.status === 'Rejected')
+        const skipped = staffKpis.filter(isKpiSkipped)
 
         return (
           <div key={staff.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -356,7 +369,7 @@ function SupervisorView({ allUsers }) {
                 <div>
                   <p className="text-sm font-semibold text-gray-900">{staff.name}</p>
                   <p className="text-xs text-gray-400">
-                    {staffKpis.length}/{KPI_MAX_PER_QUARTER} KPI · {accepted.length} ยอมรับ · {pending.length} รอยืนยัน · {rejected.length} ปฏิเสธ
+                    {staffKpis.length}/{KPI_MAX_PER_QUARTER} KPI · {accepted.length} ใช้ประเมิน · {pending.length} รอยืนยัน · {rejected.length} ปฏิเสธ · {skipped.length} Skip
                   </p>
                 </div>
               </div>
@@ -563,7 +576,8 @@ function SupervisorView({ allUsers }) {
                 ) : (
                   <div className="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
                     {assignedInModal.map((kpi, idx) => {
-                      const canEdit = kpi.status === 'Pending' || kpi.status === 'Rejected'
+                      const skipped = isKpiSkipped(kpi)
+                      const canEdit = !skipped && (kpi.status === 'Pending' || kpi.status === 'Rejected')
                       return (
                         <div key={kpi.id} className="px-4 py-3 bg-white">
                           <div className="flex items-start justify-between gap-3">
@@ -575,6 +589,7 @@ function SupervisorView({ allUsers }) {
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <p className="text-xs font-semibold text-gray-900">{kpi.title}</p>
                                   <StatusBadge status={kpi.status} />
+                                  {skipped && <SkippedBadge />}
                                 </div>
                                 <p className="text-[11px] text-gray-500 mt-1">วิธีประเมิน: <span className="text-gray-700">{kpi.assessmentMethod}</span></p>
                                 {kpi.remark && <p className="text-[11px] text-gray-400 mt-0.5">หมายเหตุ: {kpi.remark}</p>}
@@ -682,10 +697,11 @@ function StaffView({ allUsers }) {
 
   const myKpis = data.kpis.filter((k) => k.staffId === currentUser.id && k.year === selectedYear)
   const quarterKpis = myKpis.filter((k) => k.quarter === filterQuarter)
-  const accepted = quarterKpis.filter((k) => k.status === 'Accepted')
-  const pending = quarterKpis.filter((k) => k.status === 'Pending')
-  const rejected = quarterKpis.filter((k) => k.status === 'Rejected')
-  const maxPerItem = kpiMaxPerItem(quarterKpis.length)
+  const accepted = getScorableKpis(quarterKpis)
+  const pending = quarterKpis.filter((k) => !isKpiSkipped(k) && k.status === 'Pending')
+  const rejected = quarterKpis.filter((k) => !isKpiSkipped(k) && k.status === 'Rejected')
+  const skipped = quarterKpis.filter(isKpiSkipped)
+  const maxPerItem = kpiMaxPerItem(accepted.length)
 
   const getUserById = (id) => allUsers.find((u) => u.id === id)
 
@@ -783,11 +799,27 @@ function StaffView({ allUsers }) {
         </div>
       )}
 
+      {/* Skipped items */}
+      {skipped.length > 0 && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2">
+          <p className="text-xs font-semibold text-gray-700">KPI ที่ Skip / Ignore ({skipped.length} รายการ) — ไม่นำไปคิดคะแนน</p>
+          {skipped.map((kpi) => (
+            <div key={kpi.id} className="bg-white rounded-lg border border-gray-200 px-3 py-2.5 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-gray-800">{kpi.title}</p>
+                <p className="text-[11px] text-gray-500 mt-0.5">สถานะเดิม: {STATUS_STYLES[kpi.status]?.label || kpi.status}</p>
+              </div>
+              <SkippedBadge />
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Accepted — view only (scoring moved to Evaluation Forms) */}
       {accepted.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-3 bg-green-50 border-b border-green-100">
-            <p className="text-xs font-semibold text-green-800">KPI ที่ยอมรับแล้ว ({accepted.length} รายการ)</p>
+            <p className="text-xs font-semibold text-green-800">KPI ที่ใช้ประเมิน ({accepted.length} รายการ · ข้อละ {maxPerItem} คะแนน)</p>
             <span className="text-xs text-blue-600">ไปที่ Evaluation Forms &gt; Part 3 เพื่อประเมินตนเอง</span>
           </div>
           <div className="p-5 space-y-4">
@@ -842,8 +874,8 @@ function StaffView({ allUsers }) {
 
 // ─── Read-only Overview (HR / MD) ─────────────────────────────────────────────
 
-function OverviewView({ allUsers }) {
-  const { data, selectedYear, getEvaluation } = useApp()
+function OverviewView({ allUsers, canSkipKpi }) {
+  const { data, selectedYear, getEvaluation, setKpiSkipped } = useApp()
   const [filterStaff, setFilterStaff] = useState('all')
   const [filterQuarter, setFilterQuarter] = useState('Q1')
   const [expandedStaffIds, setExpandedStaffIds] = useState(new Set())
@@ -860,6 +892,10 @@ function OverviewView({ allUsers }) {
       else next.add(staffId)
       return next
     })
+  }
+
+  const toggleKpiSkipped = (kpi) => {
+    setKpiSkipped(kpi.id, !isKpiSkipped(kpi))
   }
 
   return (
@@ -890,17 +926,17 @@ function OverviewView({ allUsers }) {
         </div>
       ) : filteredStaff.map((staff) => {
         const staffKpis = yearKpis.filter(k => k.staffId === staff.id && k.quarter === filterQuarter)
-        const accepted = staffKpis.filter(k => k.status === 'Accepted')
+        const accepted = getScorableKpis(staffKpis)
+        const skipped = staffKpis.filter(isKpiSkipped)
         const supId = getEffectiveConfig(data.staffConfigs, staff.id, selectedYear, filterQuarter)?.supervisorId
         const supEval = supId ? getEvaluation(selectedYear, filterQuarter, staff.id, supId, 'part3_sup') : null
         const staffEval = getEvaluation(selectedYear, filterQuarter, staff.id, staff.id, 'part3_staff')
 
         const staffTotal = staffEval?.rawTotal ?? null
         const supTotal = supEval?.rawTotal ?? null
-        const kpiCount = staffKpis.length
-        const maxPerItem = kpiMaxPerItem(kpiCount)
-        const maxPossible = kpiCount * maxPerItem
-        const hasIncompleteKpis = kpiCount !== KPI_MAX_PER_QUARTER
+        const maxPerItem = kpiMaxPerItem(accepted.length)
+        const maxPossible = accepted.length * maxPerItem
+        const hasIncompleteKpis = !isKpiSetupReady(staffKpis)
 
         let weightedScore = null
         if (staffTotal !== null && supTotal !== null) {
@@ -924,7 +960,7 @@ function OverviewView({ allUsers }) {
                 <div>
                   <p className="text-sm font-semibold text-gray-900">{staff.name}</p>
                   <p className="text-xs text-gray-400">
-                    {staffKpis.length} KPI · {accepted.length} ยอมรับ
+                    {staffKpis.length} KPI · {accepted.length} ใช้ประเมิน · {skipped.length} Skip
                     {supId && <span> · Sup: {getUserById(supId)?.name}</span>}
                   </p>
                 </div>
@@ -949,6 +985,8 @@ function OverviewView({ allUsers }) {
                 ) : (
                   <div className="divide-y divide-gray-50">
                     {staffKpis.map((kpi, idx) => {
+                      const skipped = isKpiSkipped(kpi)
+                      const scorable = isKpiScorable(kpi)
                       const sScore = staffEval?.kpiScores?.[kpi.id] ?? null
                       const supScore = supEval?.kpiScores?.[kpi.id] ?? null
                       return (
@@ -961,11 +999,25 @@ function OverviewView({ allUsers }) {
                             {kpi.rejectReason && kpi.status === 'Rejected' && <p className="text-[10px] text-red-500 mt-0.5">เหตุผลที่ปฏิเสธ: {kpi.rejectReason}</p>}
                           </div>
                           <div className="flex flex-col items-end gap-2 shrink-0">
-                            <StatusBadge status={kpi.status} />
-                            <div className="flex items-center gap-3 text-xs mt-1">
-                              <span className="text-blue-600 font-semibold">Staff: {sScore ?? '—'}/{maxPerItem}</span>
-                              <span className="text-indigo-600 font-semibold">Sup: {supScore ?? '—'}/{maxPerItem}</span>
+                            <div className="flex items-center gap-1.5">
+                              <StatusBadge status={kpi.status} />
+                              {skipped && <SkippedBadge />}
                             </div>
+                            {scorable && (
+                              <div className="flex items-center gap-3 text-xs mt-1">
+                                <span className="text-blue-600 font-semibold">Staff: {sScore ?? '—'}/{maxPerItem}</span>
+                                <span className="text-indigo-600 font-semibold">Sup: {supScore ?? '—'}/{maxPerItem}</span>
+                              </div>
+                            )}
+                            {canSkipKpi && (
+                              <button
+                                type="button"
+                                onClick={(event) => { event.stopPropagation(); toggleKpiSkipped(kpi) }}
+                                className={`px-2.5 py-1 rounded-md border text-[11px] font-semibold transition-colors ${skipped ? 'border-gray-300 text-gray-600 bg-gray-50 hover:bg-white' : 'border-gray-300 text-gray-600 bg-white hover:bg-gray-100'}`}
+                              >
+                                {skipped ? 'ยกเลิก Skip' : 'Skip / Ignore'}
+                              </button>
+                            )}
                           </div>
                         </div>
                       )
@@ -995,7 +1047,7 @@ function OverviewView({ allUsers }) {
 
 export default function KpiPage() {
   const { data, currentUser, selectedYear } = useApp()
-  const { role } = useRBAC()
+  const { role, isRole } = useRBAC()
   const [firebaseUsers, setFirebaseUsers] = useState([])
   const [activeViewId, setActiveViewId] = useState('')
 
@@ -1014,6 +1066,7 @@ export default function KpiPage() {
     (c) => c.staffId === currentUser.id && c.year === selectedYear
   )
   const isExecOrHR = ['MasterAdmin', 'HR', 'HRM', 'GM', 'MD'].includes(role)
+  const canSkipKpi = isRole('MasterAdmin')
 
   const availableViews = []
   if (isAssignedAsStaff) availableViews.push({ id: 'staff', label: 'การประเมินตนเอง (Staff)', icon: UserCircle2 })
@@ -1030,7 +1083,7 @@ export default function KpiPage() {
   } else if (actualViewId === 'sup') {
     view = <SupervisorView allUsers={allUsers} />
   } else if (actualViewId === 'hr') {
-    view = <OverviewView allUsers={allUsers} />
+    view = <OverviewView allUsers={allUsers} canSkipKpi={canSkipKpi} />
   } else {
     view = (
       <div className="flex flex-col items-center justify-center py-24 text-center">

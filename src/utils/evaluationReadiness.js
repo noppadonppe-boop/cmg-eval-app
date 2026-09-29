@@ -1,4 +1,5 @@
 import { getEffectiveConfig } from '../context/AppContext'
+import { isKpiSetupReady } from './kpiUtils'
 
 /**
  * Evaluation cards must not be counted as pending until all required setup data
@@ -13,7 +14,7 @@ export function isEvaluationReady({ data, staffId, year, quarter, users = [] }) 
   const hasDiscipline = evaluations.some(
     (e) => e.staffId === staffId && e.year === year && e.quarter === quarter && e.part === 'part2'
   )
-  const hasThreeAcceptedKpis = kpis.length === 3 && kpis.every((k) => k.status === 'Accepted')
+  const hasThreeAcceptedKpis = isKpiSetupReady(kpis)
 
   const staff = users.find((user) => (user.id || user.uid) === staffId)
   const hasJobDescription = !!staff?.jdUrl?.trim()

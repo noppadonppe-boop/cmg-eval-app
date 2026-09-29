@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { subscribeToApp, seedIfEmpty, persistUpdate, hasConfig } from '../services/firestoreService'
 import { useAuth } from './AuthContext'
 import { normalizePositions } from '../utils/userUtils'
+import { getKpiMaxPerItem, isKpiScorable, isKpiSkipped } from '../utils/kpiUtils'
 
 const INITIAL_DATA = {
   users: [
@@ -378,6 +379,77 @@ export function AppProvider({ children }) {
     }))
   }
 
+  // Only MasterAdmin can exempt a KPI from scoring. The KPI remains assigned
+  // and occupies a slot, but it no longer blocks readiness or receives points.
+  const setKpiSkipped = (id, skipped = true) => {
+    const roles = Array.isArray(currentUser?.roles)
+      ? currentUser.roles
+      : [currentUser?.role || 'Staff']
+    if (!roles.includes('MasterAdmin')) return
+
+    setDataAndPersist((prev) => {
+      const previousKpis = prev?.kpis ?? []
+      const target = previousKpis.find((kpi) => kpi.id === id)
+      if (!target || isKpiSkipped(target) === skipped) return prev
+
+      const sameKpiSet = (kpi) => (
+        kpi.staffId === target.staffId &&
+        kpi.year === target.year &&
+        kpi.quarter === target.quarter
+      )
+      const previousActiveCount = previousKpis.filter((kpi) => sameKpiSet(kpi) && !isKpiSkipped(kpi)).length
+      const nextKpis = previousKpis.map((kpi) => {
+        if (kpi.id !== id) return kpi
+        const next = { ...kpi, isSkipped: skipped }
+        // Support any legacy records that used status="Skipped".
+        if (!skipped && next.status === 'Skipped') next.status = 'Pending'
+        return next
+      })
+      const nextActiveCount = nextKpis.filter((kpi) => sameKpiSet(kpi) && !isKpiSkipped(kpi)).length
+      const previousMax = getKpiMaxPerItem(previousActiveCount)
+      const nextMax = getKpiMaxPerItem(nextActiveCount)
+      const nextScorableIds = new Set(
+        nextKpis.filter((kpi) => sameKpiSet(kpi) && isKpiScorable(kpi)).map((kpi) => kpi.id)
+      )
+
+      // Keep existing Part 3 records consistent if an exemption is applied
+      // after someone has already entered scores.
+      const nextEvaluations = (prev?.quarterlyEvaluations ?? []).map((evaluation) => {
+        if (
+          evaluation.staffId !== target.staffId ||
+          evaluation.year !== target.year ||
+          evaluation.quarter !== target.quarter ||
+          !['part3_staff', 'part3_sup'].includes(evaluation.part) ||
+          !evaluation.kpiScores
+        ) return evaluation
+
+        const nextScores = {}
+        Object.entries(evaluation.kpiScores).forEach(([kpiId, value]) => {
+          const belongsToSet = nextKpis.some((kpi) => kpi.id === kpiId && sameKpiSet(kpi))
+          if (!belongsToSet) return
+          const numeric = Number(value)
+          if (!Number.isFinite(numeric)) return
+          const adjusted = previousMax === nextMax
+            ? numeric
+            : Math.round((numeric / previousMax) * nextMax)
+          nextScores[kpiId] = Math.min(nextMax, Math.max(0, adjusted))
+        })
+        const rawTotal = Object.entries(nextScores)
+          .filter(([kpiId]) => nextScorableIds.has(kpiId))
+          .reduce((sum, [, value]) => sum + value, 0)
+        return {
+          ...evaluation,
+          kpiScores: nextScores,
+          rawTotal,
+          scaledScore: rawTotal,
+          updatedAt: new Date().toISOString(),
+        }
+      })
+
+      return { ...prev, kpis: nextKpis, quarterlyEvaluations: nextEvaluations }
+    })
+  }
+
   const saveEvaluation = (evalRecord) => {
     setDataAndPersist((prev) => {
       const evals = prev?.quarterlyEvaluations ?? []
@@ -506,6 +578,7 @@ export function AppProvider({ children }) {
         addKpi,
         updateKpi,
         removeKpi,
+        setKpiSkipped,
         respondKpi,
         resetEvaluationsForYear,
         saveEvaluation,

@@ -10,6 +10,7 @@ import StaffMiniCard from '../components/eval/StaffMiniCard'
 import { ClipboardList, User, Users, Briefcase, Shield, Target, ChevronDown, ShieldOff, Trash2 } from 'lucide-react'
 import { getQuarterScores } from '../utils/scoreUtils'
 import { filterVisibleUsers, isDeveloperUser } from '../utils/userUtils'
+import { isKpiSetupReady } from '../utils/kpiUtils'
 
 function StaffSelector({ staffList, value, onChange }) {
   const [open, setOpen] = useState(false)
@@ -98,11 +99,14 @@ function useEvalAccess() {
   const isAssignedAsStaff = !isDeveloperUser(currentUser) && yearConfigs.some((c) => c.staffId === currentUser.id)
   const isSupervisor = supervisedStaff.length > 0
   const isStakeholder = stakeholderStaff.length > 0
+  const isMasterAdmin = role === 'MasterAdmin'
   const hasAllStaffAccess = ['MasterAdmin', 'HR', 'HRM', 'MD', 'GM'].includes(role)
 
-  const allStaffList = hasAllStaffAccess
-    ? yearConfigs.map((c) => allUsers.find((u) => u.id === c.staffId)).filter(Boolean)
-    : []
+  const allStaffList = isMasterAdmin
+    ? allUsers.filter((u) => u.id !== currentUser.id)
+    : hasAllStaffAccess
+      ? yearConfigs.map((c) => allUsers.find((u) => u.id === c.staffId)).filter(Boolean)
+      : []
 
   const partSet = new Set()
   if (isAssignedAsStaff) {
@@ -118,10 +122,14 @@ function useEvalAccess() {
     partSet.add('part1');
     if (['HR', 'HRM'].includes(role)) partSet.add('part2')
   }
+  if (isMasterAdmin) {
+    partSet.add('part1'); partSet.add('part2'); partSet.add('part3'); partSet.add('part4')
+  }
 
   const parts = ['part1', 'part2', 'part3', 'part4'].filter((p) => partSet.has(p))
 
   const getEvaluatorRole = (staffId) => {
+    if (isMasterAdmin) return 'MasterAdmin'
     const cfg = yearConfigs.find((c) => c.staffId === staffId)
     // Always check contextual relationship first!
     if (cfg?.supervisorId === currentUser.id) return 'Supervisor'
@@ -136,7 +144,7 @@ function useEvalAccess() {
     return 'Staff'
   }
 
-  return { parts, role, isSupervisor, isStakeholder, isAssignedAsStaff, supervisedStaff, stakeholderStaff, allStaffList, hasAllStaffAccess, getEvaluatorRole, allUsers, yearConfigs }
+  return { parts, role, isMasterAdmin, isSupervisor, isStakeholder, isAssignedAsStaff, supervisedStaff, stakeholderStaff, allStaffList, hasAllStaffAccess, getEvaluatorRole, allUsers, yearConfigs }
 }
 
 const PART_META = {
@@ -156,7 +164,7 @@ const PART_TAB_ACTIVE = {
 export default function EvalPage() {
   const { selectedYear, activeQuarter, currentUser, data, getEvaluation, getEvaluationForPart, removeEvaluation } = useApp()
   const { isRole } = useRBAC()
-  const { parts, role, isSupervisor, isStakeholder, isAssignedAsStaff, supervisedStaff, stakeholderStaff, allStaffList, hasAllStaffAccess, getEvaluatorRole, allUsers, yearConfigs } = useEvalAccess()
+  const { parts, role, isMasterAdmin, isSupervisor, isStakeholder, isAssignedAsStaff, supervisedStaff, stakeholderStaff, allStaffList, hasAllStaffAccess, getEvaluatorRole, allUsers, yearConfigs } = useEvalAccess()
   const canDeleteEvaluation = isRole('MasterAdmin')
 
   const [activePart, setActivePart] = useState(null)
@@ -185,7 +193,7 @@ export default function EvalPage() {
     const quarterKpis = (data.kpis || []).filter(
       (k) => k.staffId === staffId && k.year === selectedYear && k.quarter === quarter
     )
-    const kpiSetAndAcceptedAll3 = quarterKpis.length === 3 && quarterKpis.every((k) => k.status === 'Accepted')
+    const kpiSetAndAcceptedAll3 = isKpiSetupReady(quarterKpis)
 
     const staff = (allUsers || []).find((u) => u.id === staffId) || null
     const jdAttachmentSet = !!staff?.jdUrl?.trim()
@@ -214,11 +222,12 @@ export default function EvalPage() {
     if (!r.disciplineSet) missing.push('Discipline')
     if (!r.kpiSetAndAcceptedAll3) missing.push('KPI')
     if (!r.jdAttachmentSet) missing.push('Job Description')
-    if (!r.hasSupervisorAndStakeholdersReady) missing.push('Sup, Stake')
+    if (!r.supervisorSet) missing.push('Supervisor')
+    if (!r.stakeholdersSet) missing.push('Stakeholder')
     return missing
   }
 
-  const canOpenCard = (staffId) => getSetupReadiness(staffId).ready
+  const canOpenCard = (staffId) => isMasterAdmin || getSetupReadiness(staffId).ready
 
   const hasPartEvaluation = (staffId, part, evaluatorId = null, evaluatorRole = null) => {
     const rows = (data.quarterlyEvaluations || []).filter(
@@ -246,6 +255,107 @@ export default function EvalPage() {
     return rows.some((e) => e.rawTotal != null || e.scaledScore != null || e.score != null)
   }
 
+  // Count evaluator people only after all parts assigned to that person are saved.
+  // This keeps the MasterAdmin card aligned with the same completion state shown to
+  // the actual evaluator, while still allowing MasterAdmin to open every card.
+  const getEvaluatorProgress = (staffId) => {
+    const includedParts = getQuarterScores(data, staffId, selectedYear, quarter)?.includedParts || {}
+    const cfg = (yearConfigs || []).find((c) => c.staffId === staffId)
+    const requirements = []
+
+    const addRequirement = ({ id, label, evaluatorId, evaluatorRole, parts }) => {
+      const requiredParts = parts.filter((part) => includedParts[part.includedPart])
+      if (requiredParts.length === 0) return
+      const done = requiredParts.every((part) =>
+        hasScoredPartEvaluation(staffId, part.part, evaluatorId, evaluatorRole)
+      )
+      requirements.push({ id, label, done })
+    }
+
+    const staff = allUsers.find((u) => u.id === staffId)
+    addRequirement({
+      id: staffId,
+      label: getDisplayName(staff),
+      evaluatorId: staffId,
+      evaluatorRole: 'Staff',
+      parts: [
+        { includedPart: 'part1', part: 'part1' },
+        { includedPart: 'part3', part: 'part3_staff' },
+        { includedPart: 'part4', part: 'part4' },
+      ],
+    })
+
+    if (cfg?.supervisorId) {
+      const supervisor = allUsers.find((u) => u.id === cfg.supervisorId)
+      addRequirement({
+        id: cfg.supervisorId,
+        label: getDisplayName(supervisor) === 'ไม่ทราบชื่อ' ? 'Supervisor' : getDisplayName(supervisor),
+        evaluatorId: cfg.supervisorId,
+        evaluatorRole: 'Supervisor',
+        parts: [
+          { includedPart: 'part1', part: 'part1' },
+          { includedPart: 'part3', part: 'part3_sup' },
+          { includedPart: 'part4', part: 'part4' },
+        ],
+      })
+    }
+
+    getUniqueStakeholderIds(staffId).forEach((stakeholderId) => {
+      const stakeholder = allUsers.find((u) => u.id === stakeholderId)
+      addRequirement({
+        id: stakeholderId,
+        label: getDisplayName(stakeholder) === 'ไม่ทราบชื่อ' ? 'Stakeholder' : getDisplayName(stakeholder),
+        evaluatorId: stakeholderId,
+        evaluatorRole: 'Stakeholder',
+        parts: [
+          { includedPart: 'part1', part: 'part1' },
+          { includedPart: 'part4', part: 'part4' },
+        ],
+      })
+    })
+
+    if (includedParts.part2) {
+      requirements.push({
+        id: `${staffId}-part2`,
+        label: 'HR (Part 2)',
+        done: hasScoredPartEvaluation(staffId, 'part2'),
+      })
+    }
+
+    const completed = requirements.filter((item) => item.done).length
+    return {
+      completed,
+      total: requirements.length,
+      missing: requirements.filter((item) => !item.done).map((item) => item.label),
+    }
+  }
+
+  const getMasterAdminCardStatus = (staffId, summaryStatus) => {
+    const setupMissing = getMissingSetupLabels(staffId)
+    const progress = getEvaluatorProgress(staffId)
+    const progressLabel = progress.total > 0
+      ? `ประเมินแล้ว ${progress.completed}/${progress.total} คน`
+      : 'ยังไม่มีผู้ประเมิน'
+    const details = [progressLabel]
+
+    if (setupMissing.length > 0) {
+      details.push(`ขาด: ${setupMissing.join(', ')}`)
+    }
+    if (progress.missing.length > 0) {
+      const visibleMissing = progress.missing.slice(0, 2).join(', ')
+      const more = progress.missing.length > 2 ? ` +${progress.missing.length - 2}` : ''
+      details.push(`รอผู้ประเมิน: ${visibleMissing}${more}`)
+    }
+
+    const allEvaluatorsDone = progress.total > 0 && progress.completed === progress.total
+    return {
+      ...summaryStatus,
+      label: allEvaluatorsDone ? `ประเมินครบแล้ว (${progress.completed}/${progress.total} คน)` : progressLabel,
+      detail: details.join(' · '),
+      tone: setupMissing.length > 0 ? 'notReady' : allEvaluatorsDone ? 'done' : 'todo',
+    }
+  }
+
   const getUniqueStakeholderIds = (staffId) => {
     const cfg = (yearConfigs || []).find((c) => c.staffId === staffId)
     return [...new Set((cfg?.stakeholderIds || []).filter(Boolean))]
@@ -257,7 +367,7 @@ export default function EvalPage() {
   }
 
   const hasAllEvaluatorParts = (staffId, part, evaluatorIds, evaluatorRole) =>
-    evaluatorIds.every((evaluatorId) => hasPartEvaluation(staffId, part, evaluatorId, evaluatorRole))
+    evaluatorIds.every((evaluatorId) => hasScoredPartEvaluation(staffId, part, evaluatorId, evaluatorRole))
 
   const getSummaryMissingEvaluators = (staffId) => {
     const missing = []
@@ -315,28 +425,28 @@ export default function EvalPage() {
     const isSummaryContext = contextMode === 'summary'
     
     // Summary cards count a part as complete only when every required evaluator has submitted it.
-    if (isSummaryContext || (hasAllStaffAccess && !isSupervisor && !isStakeholder && !isAssignedAsStaff)) {
+    if (isSummaryContext || (!isMasterAdmin && hasAllStaffAccess && !isSupervisor && !isStakeholder && !isAssignedAsStaff)) {
       const includedParts = getQuarterScores(data, staffId, selectedYear, quarter)?.includedParts || {}
       const supervisorId = getSupervisorId(staffId)
       const stakeholderIds = getUniqueStakeholderIds(staffId)
       const allStakeholdersAssigned = stakeholderIds.length === 3
       const part1Done = !!(
-        hasPartEvaluation(staffId, 'part1', null, 'Staff') &&
+        hasScoredPartEvaluation(staffId, 'part1', null, 'Staff') &&
         supervisorId &&
-        hasPartEvaluation(staffId, 'part1', supervisorId, 'Supervisor') &&
+        hasScoredPartEvaluation(staffId, 'part1', supervisorId, 'Supervisor') &&
         allStakeholdersAssigned &&
         hasAllEvaluatorParts(staffId, 'part1', stakeholderIds, 'Stakeholder')
       )
-      const part2Done = hasPartEvaluation(staffId, 'part2')
+      const part2Done = hasScoredPartEvaluation(staffId, 'part2')
       const part3Done = !!(
-        hasPartEvaluation(staffId, 'part3_staff', null, 'Staff') &&
+        hasScoredPartEvaluation(staffId, 'part3_staff', null, 'Staff') &&
         supervisorId &&
-        hasPartEvaluation(staffId, 'part3_sup', supervisorId, 'Supervisor')
+        hasScoredPartEvaluation(staffId, 'part3_sup', supervisorId, 'Supervisor')
       )
       const part4Done = !!(
-        hasPartEvaluation(staffId, 'part4', null, 'Staff') &&
+        hasScoredPartEvaluation(staffId, 'part4', null, 'Staff') &&
         supervisorId &&
-        hasPartEvaluation(staffId, 'part4', supervisorId, 'Supervisor') &&
+        hasScoredPartEvaluation(staffId, 'part4', supervisorId, 'Supervisor') &&
         allStakeholdersAssigned &&
         hasAllEvaluatorParts(staffId, 'part4', stakeholderIds, 'Stakeholder')
       )
@@ -361,7 +471,9 @@ export default function EvalPage() {
       }
     }
 
-    const ctxRole = evaluatorContext === 'stakeholder'
+    const ctxRole = evaluatorContext === 'masteradmin'
+      ? 'MasterAdmin'
+      : evaluatorContext === 'stakeholder'
       ? 'Stakeholder'
       : evaluatorContext === 'supervisor'
         ? 'Supervisor'
@@ -370,12 +482,14 @@ export default function EvalPage() {
     const part1Done = ctxRole === 'Staff'
       ? hasPartEvaluation(staffId, 'part1', null, 'Staff')
       : hasPartEvaluation(staffId, 'part1', currentUser.id, ctxRole)
-    const part2Done = hasPartEvaluation(staffId, 'part2')
+    const part2Done = ctxRole === 'MasterAdmin'
+      ? hasPartEvaluation(staffId, 'part2', currentUser.id, 'MasterAdmin')
+      : hasPartEvaluation(staffId, 'part2')
     const part3Done = evaluatorContext === 'stakeholder'
       ? true
       : (ctxRole === 'Staff'
         ? hasPartEvaluation(staffId, 'part3_staff', null, 'Staff')
-        : hasPartEvaluation(staffId, 'part3_sup', currentUser.id, 'Supervisor'))
+        : hasPartEvaluation(staffId, 'part3_sup', currentUser.id, ctxRole))
     const part4Done = ctxRole === 'Staff'
       ? hasPartEvaluation(staffId, 'part4', null, 'Staff')
       : hasPartEvaluation(staffId, 'part4', currentUser.id, ctxRole)
@@ -391,7 +505,7 @@ export default function EvalPage() {
   }
 
   const handleCardClick = (staffId, mode, context = null) => {
-    if (mode === 'evaluate' && !canOpenCard(staffId)) return
+    if (mode === 'evaluate' && !isMasterAdmin && !canOpenCard(staffId)) return
     setSelectedStaff(staffId)
     setViewMode(mode)
     setEvaluatorContext(context) // Store evaluator context
@@ -434,7 +548,7 @@ export default function EvalPage() {
           </div>
 
           <div className="flex flex-col xl:flex-row gap-4 sm:gap-8 mb-8 sm:mb-12">
-            {isAssignedAsStaff && (
+            {isAssignedAsStaff && !isMasterAdmin && (
               <div className="w-full xl:w-56 shrink-0">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-100">
@@ -463,11 +577,11 @@ export default function EvalPage() {
               </div>
             )}
 
-            {isAssignedAsStaff && isSupervisor && supervisedStaff.length > 0 && (
+            {isAssignedAsStaff && !isMasterAdmin && isSupervisor && supervisedStaff.length > 0 && (
               <div className="hidden xl:block w-px self-stretch bg-gray-200"></div>
             )}
 
-            {isSupervisor && supervisedStaff.length > 0 && (
+            {isSupervisor && !isMasterAdmin && supervisedStaff.length > 0 && (
               <div className="flex-1 w-full min-w-0">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-green-100">
@@ -498,7 +612,7 @@ export default function EvalPage() {
             )}
           </div>
 
-          {isStakeholder && stakeholderStaff.length > 0 && (
+          {isStakeholder && !isMasterAdmin && stakeholderStaff.length > 0 && (
             <div className="mb-12">
               <div className="flex items-center gap-2 mb-4">
                 <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-purple-100">
@@ -536,15 +650,16 @@ export default function EvalPage() {
                 </div>
                 <h2 className="text-base sm:text-xl font-bold text-gray-900 flex items-center gap-2 sm:gap-3">
                   พนักงานทั้งหมด 
-                  <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-[10px] sm:text-xs font-semibold">สรุปคะแนน</span>
+                  <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-[10px] sm:text-xs font-semibold">{isMasterAdmin ? 'ประเมิน / ดูคะแนนรวม' : 'สรุปคะแนน'}</span>
                 </h2>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 {(() => {
                   const listWithScores = allStaffList.map((u) => {
-                    const s = getCardStatus(u.id, 'summary')
+                    const summaryStatus = getCardStatus(u.id, 'summary')
+                    const s = isMasterAdmin ? getMasterAdminCardStatus(u.id, summaryStatus) : summaryStatus
                     const scores = getQuarterScores(data, u.id, selectedYear, quarter)
-                    const missingDetail = role === 'MasterAdmin' ? getSummaryMissingEvaluators(u.id) : ''
+                    const missingDetail = isMasterAdmin ? s.detail : role === 'MasterAdmin' ? getSummaryMissingEvaluators(u.id) : ''
                     return { u, s, total: scores?.total ?? null, missingDetail }
                   })
 
@@ -563,9 +678,9 @@ export default function EvalPage() {
                       statusDetail={missingDetail}
                       statusTone={s.tone}
                       statusParts={s.statusParts}
-                      isSummaryCard={true}
+                      isSummaryCard
                       summaryScore={total}
-                      onClick={() => handleCardClick(u.id, 'summary')}
+                      onClick={() => handleCardClick(u.id, isMasterAdmin ? 'evaluate' : 'summary', isMasterAdmin ? 'masteradmin' : null)}
                     />
                   ))
                 })()}
@@ -818,10 +933,11 @@ export default function EvalPage() {
 
             {(() => {
               // Use evaluatorContext if available, otherwise fallback to getEvaluatorRole
-              const ctxRole = evaluatorContext === 'stakeholder' ? 'Stakeholder' : 
-                             evaluatorContext === 'supervisor' ? 'Supervisor' : 
-                             getEvaluatorRole(effectiveStaffId)
-              const isSupervisorForStaff = ctxRole === 'Supervisor'
+              const ctxRole = evaluatorContext === 'masteradmin' ? 'MasterAdmin' :
+                              evaluatorContext === 'stakeholder' ? 'Stakeholder' :
+                              evaluatorContext === 'supervisor' ? 'Supervisor' :
+                              getEvaluatorRole(effectiveStaffId)
+              const isSupervisorForStaff = ctxRole === 'Supervisor' || ctxRole === 'MasterAdmin'
               // HR shouldn't edit KPI directly unless they are the supervisor.
               const canSeeKpi = isSupervisorForStaff || (ctxRole === 'Staff' && effectiveStaffId === currentUser.id)
               
@@ -871,6 +987,7 @@ export default function EvalPage() {
                       quarter={quarter}
                       year={selectedYear}
                       evaluatorRole={ctxRole}
+                      evaluatorContext={evaluatorContext}
                       isSupervisor={isSupervisorForStaff}
                       onComplete={goToPart4}
                     />

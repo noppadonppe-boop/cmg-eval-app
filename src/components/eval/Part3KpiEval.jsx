@@ -4,6 +4,12 @@ import { ROLE_AVATAR_BG } from '../../hooks/useRBAC'
 import {
   Target, CheckCircle2, XCircle, AlertCircle, Save, Star, Info, Clock,
 } from 'lucide-react'
+import {
+  getKpiMaxPerItem,
+  getScorableKpis,
+  isKpiSkipped,
+  KPI_TOTAL_SCORE,
+} from '../../utils/kpiUtils'
 
 /**
  * Part3KpiEval — embedded in EvalPage
@@ -12,13 +18,13 @@ import {
  * Formula: Staff_total × 0.40 + Sup_total × 0.60
  */
 
-const KPI_TOTAL_SCORE = 30
-const kpiMaxPerItem = (count) => (count > 0 ? KPI_TOTAL_SCORE / count : KPI_TOTAL_SCORE)
+const kpiMaxPerItem = getKpiMaxPerItem
 
 const STATUS_STYLES = {
   Pending:  { bg: 'bg-yellow-50',  text: 'text-yellow-700',  ring: 'ring-yellow-200',  icon: <Clock size={12} />,       label: 'รอยืนยัน' },
   Accepted: { bg: 'bg-green-50',   text: 'text-green-700',   ring: 'ring-green-200',   icon: <CheckCircle2 size={12} />, label: 'ยอมรับแล้ว' },
   Rejected: { bg: 'bg-red-50',     text: 'text-red-700',     ring: 'ring-red-200',     icon: <XCircle size={12} />,      label: 'ปฏิเสธ' },
+  Skipped:  { bg: 'bg-gray-100',   text: 'text-gray-600',   ring: 'ring-gray-300',   icon: <XCircle size={12} />,         label: 'Skip / Ignore' },
 }
 
 function StatusBadge({ status }) {
@@ -26,6 +32,14 @@ function StatusBadge({ status }) {
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ring-1 ${s.bg} ${s.text} ${s.ring}`}>
       {s.icon}{s.label}
+    </span>
+  )
+}
+
+function SkippedBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ring-1 bg-gray-100 text-gray-600 ring-gray-300">
+      <XCircle size={12} /> Skip / Ignore (ไม่นับคะแนน)
     </span>
   )
 }
@@ -62,10 +76,11 @@ function StaffScoringPanel({ staffId, quarter, year, onComplete }) {
   const myKpis = data.kpis.filter(
     (k) => k.staffId === staffId && k.year === year && k.quarter === quarter
   )
-  const accepted = myKpis.filter((k) => k.status === 'Accepted')
-  const pending  = myKpis.filter((k) => k.status === 'Pending')
-  const rejected = myKpis.filter((k) => k.status === 'Rejected')
-  const maxPerItem = kpiMaxPerItem(myKpis.length)
+  const accepted = getScorableKpis(myKpis)
+  const pending  = myKpis.filter((k) => !isKpiSkipped(k) && k.status === 'Pending')
+  const rejected = myKpis.filter((k) => !isKpiSkipped(k) && k.status === 'Rejected')
+  const skipped = myKpis.filter(isKpiSkipped)
+  const maxPerItem = kpiMaxPerItem(accepted.length)
 
   const existingEval = getEvaluation(year, quarter, staffId, staffId, 'part3_staff')
 
@@ -120,7 +135,7 @@ function StaffScoringPanel({ staffId, quarter, year, onComplete }) {
       <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-700">
         <Info size={14} className="shrink-0 mt-0.5 text-blue-500" />
         <span><strong>Part 3 — KPI (30 คะแนน):</strong> ยืนยัน KPI ที่ได้รับมอบหมาย แล้วประเมินตนเองในปลาย Quarter · น้ำหนัก Staff <strong>40%</strong>
-          {myKpis.length > 0 && <span className="ml-1">· ข้อละ <strong>{maxPerItem} คะแนน</strong> ({myKpis.length} ข้อ)</span>}</span>
+          {myKpis.length > 0 && <span className="ml-1">· ข้อละ <strong>{maxPerItem} คะแนน</strong> ({accepted.length} ข้อที่ใช้ประเมิน จาก {myKpis.length} ข้อ)</span>}</span>
       </div>
 
       {/* Pending KPIs */}
@@ -178,12 +193,25 @@ function StaffScoringPanel({ staffId, quarter, year, onComplete }) {
         </div>
       )}
 
+      {/* Skipped items */}
+      {skipped.length > 0 && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2">
+          <p className="text-xs font-semibold text-gray-700">KPI ที่ Skip / Ignore ({skipped.length} รายการ) — ไม่นำไปคิดคะแนน</p>
+          {skipped.map((kpi) => (
+            <div key={kpi.id} className="bg-white rounded-lg border border-gray-200 px-3 py-2.5 flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold text-gray-800">{kpi.title}</p>
+              <SkippedBadge />
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Accepted — self scoring */}
       {accepted.length > 0 && (
         <div className="border border-gray-200 rounded-xl overflow-hidden">
           <div className="flex items-center justify-between px-5 py-3 bg-green-50 border-b border-green-100">
             <p className="text-xs font-semibold text-green-800 flex items-center gap-1.5">
-              <Star size={12} /> KPI ที่ยอมรับ ({accepted.length} รายการ) — ประเมินตนเอง (Staff 40%)
+              <Star size={12} /> KPI ที่ใช้ประเมิน ({accepted.length} รายการ) — ประเมินตนเอง (Staff 40%)
             </p>
             {saved && (
               <span className="text-xs text-green-700 font-semibold flex items-center gap-1">
@@ -224,6 +252,18 @@ function StaffScoringPanel({ staffId, quarter, year, onComplete }) {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {accepted.length === 0 && skipped.length > 0 && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-5 text-center">
+          <p className="text-sm text-gray-700 font-medium">ไม่มี KPI ที่ใช้คิดคะแนนใน Part 3</p>
+          <p className="text-xs text-gray-500 mt-1">รายการที่ Skip / Ignore ถูกนับครบเงื่อนไขแล้ว แต่ไม่นำมาคิดใน {KPI_TOTAL_SCORE} คะแนน</p>
+          {onComplete && (
+            <button onClick={onComplete} className="mt-3 px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700">
+              ดำเนินการต่อ Part 4
+            </button>
+          )}
         </div>
       )}
 
@@ -274,18 +314,18 @@ function StaffScoringPanel({ staffId, quarter, year, onComplete }) {
 
 // ─── Supervisor scoring panel ─────────────────────────────────────────────────
 
-function SupervisorScoringPanel({ staffId, quarter, year, onComplete }) {
+function SupervisorScoringPanel({ staffId, quarter, year, evaluatorRole = 'Supervisor', onComplete }) {
   const { data, currentUser, saveEvaluation, getEvaluation } = useApp()
 
   const staffKpis = data.kpis.filter(
     (k) => k.staffId === staffId && k.year === year && k.quarter === quarter
   )
-  const accepted = staffKpis.filter((k) => k.status === 'Accepted')
+  const accepted = getScorableKpis(staffKpis)
+  const skipped = staffKpis.filter(isKpiSkipped)
   const staff = data.users.find((u) => u.id === staffId)
 
-  const kpiCount = staffKpis.length
-  const maxPerItem = kpiMaxPerItem(kpiCount)
-  const existingEval = getEvaluation(year, quarter, staffId, currentUser.id, 'part3_sup')
+  const maxPerItem = kpiMaxPerItem(accepted.length)
+  const existingEval = getEvaluation(year, quarter, staffId, currentUser.id, 'part3_sup', evaluatorRole)
   const staffEval = getEvaluation(year, quarter, staffId, staffId, 'part3_staff')
 
   const [scores, setScores] = useState(() => {
@@ -300,7 +340,7 @@ function SupervisorScoringPanel({ staffId, quarter, year, onComplete }) {
     saveEvaluation({
       year, quarter, staffId,
       evaluatorId: currentUser.id,
-      evaluatorRole: 'Supervisor',
+      evaluatorRole,
       part: 'part3_sup',
       kpiScores: { ...scores },
       rawTotal: total,
@@ -315,7 +355,7 @@ function SupervisorScoringPanel({ staffId, quarter, year, onComplete }) {
   const supTotal = saved
     ? accepted.reduce((s, k) => s + (scores[k.id] ?? 0), 0)
     : existingEval?.rawTotal ?? null
-  const maxPossible = kpiCount * maxPerItem
+  const maxPossible = accepted.length * maxPerItem
 
   let weightedScore = null
   if (staffTotal !== null && supTotal !== null) {
@@ -343,11 +383,12 @@ function SupervisorScoringPanel({ staffId, quarter, year, onComplete }) {
       </div>
 
       {/* KPI Status overview */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: 'KPI ทั้งหมด', value: staffKpis.length, color: 'text-gray-700', bg: 'bg-gray-50', border: 'border-gray-200' },
-          { label: 'ยอมรับแล้ว', value: accepted.length, color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-200' },
-          { label: 'รอยืนยัน/ปฏิเสธ', value: staffKpis.length - accepted.length, color: 'text-yellow-600', bg: 'bg-yellow-50', border: 'border-yellow-200' },
+          { label: 'ใช้ประเมิน', value: accepted.length, color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-200' },
+          { label: 'Skip / Ignore', value: skipped.length, color: 'text-gray-600', bg: 'bg-gray-100', border: 'border-gray-200' },
+          { label: 'รอยืนยัน/ปฏิเสธ', value: staffKpis.length - accepted.length - skipped.length, color: 'text-yellow-600', bg: 'bg-yellow-50', border: 'border-yellow-200' },
         ].map((s) => (
           <div key={s.label} className={`${s.bg} ${s.border} border rounded-xl px-4 py-3 text-center`}>
             <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
@@ -356,10 +397,21 @@ function SupervisorScoringPanel({ staffId, quarter, year, onComplete }) {
         ))}
       </div>
 
+      {skipped.length > 0 && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-xs text-gray-600">
+          มี KPI ที่ Skip / Ignore {skipped.length} รายการ — ไม่ถูกนำไปคิดคะแนน และคะแนนที่ใช้ประเมินจะแบ่งเท่า ๆ กันในรายการที่เหลือ
+        </div>
+      )}
+
       {accepted.length === 0 ? (
         <div className="bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-5 text-center">
-          <p className="text-sm text-yellow-700 font-medium">ยังไม่มี KPI ที่ Staff ยอมรับ</p>
-          <p className="text-xs text-yellow-600 mt-1">Staff ต้องยืนยัน KPI ก่อนจึงจะให้คะแนนได้</p>
+          <p className="text-sm text-yellow-700 font-medium">ไม่มี KPI ที่ใช้ให้คะแนน</p>
+          <p className="text-xs text-yellow-600 mt-1">รายการที่ Skip / Ignore จะไม่นำมาคิดคะแนน</p>
+          {skipped.length > 0 && onComplete && (
+            <button onClick={onComplete} className="mt-3 px-4 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700">
+              ดำเนินการต่อ Part 4
+            </button>
+          )}
         </div>
       ) : (
         <div className="border border-gray-200 rounded-xl overflow-hidden">
@@ -454,10 +506,10 @@ function SupervisorScoringPanel({ staffId, quarter, year, onComplete }) {
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
-export default function Part3KpiEval({ staffId, quarter, year, isSupervisor, onComplete }) {
+export default function Part3KpiEval({ staffId, quarter, year, evaluatorRole = 'Supervisor', isSupervisor, onComplete }) {
   // isSupervisor = true when the current user is assigned as supervisorId for this staff in staffConfig
   if (isSupervisor) {
-    return <SupervisorScoringPanel staffId={staffId} quarter={quarter} year={year} onComplete={onComplete} />
+    return <SupervisorScoringPanel staffId={staffId} quarter={quarter} year={year} evaluatorRole={evaluatorRole} onComplete={onComplete} />
   }
   return <StaffScoringPanel staffId={staffId} quarter={quarter} year={year} onComplete={onComplete} />
 }
