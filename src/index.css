@@ -4,6 +4,29 @@
   font-family: 'Sarabun', sans-serif;
 }
 
+/* Incomplete KPI assignments: strobe only the outline, keeping text readable. */
+.kpi-quarter-incomplete::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid #ef4444;
+  border-radius: inherit;
+  box-shadow: 0 0 5px rgb(239 68 68 / 45%);
+  pointer-events: none;
+  animation: kpi-quarter-strobe 1.2s step-end infinite;
+}
+
+@keyframes kpi-quarter-strobe {
+  0%, 50% { opacity: 1; }
+  25%, 75% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kpi-quarter-incomplete::after {
+    animation: none;
+  }
+}
+
 /* ─── Mobile-first responsive utilities ──────────────────────────────── */
 
 /* Smooth sidebar transitions on mobile */

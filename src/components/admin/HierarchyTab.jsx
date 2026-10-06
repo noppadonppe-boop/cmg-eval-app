@@ -396,6 +396,7 @@ export default function HierarchyTab() {
             <div>
               <h3 className="text-sm font-semibold text-gray-900">กำหนด Staff ให้กับ Supervisor</h3>
               <p className="text-[11px] text-gray-500 mt-0.5">ปี {selectedYear} · <span className="font-bold text-indigo-600">{activeQuarter}</span> · เลือก Supervisor เพื่อโหลด Staff เดิมมาแก้ไข</p>
+              <p className="text-[11px] text-amber-700 mt-1">เมื่อเปลี่ยน Supervisor ต้องมอบหมาย KPI ใหม่ใน Q นี้และ Q ถัดไปที่ใช้ Supervisor ต่อเนื่อง โดยเก็บ KPI และคะแนน Part 3 เดิมเป็นประวัติ</p>
             </div>
             <div className="px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 text-[11px] text-gray-500">
               {supStaffIds.length} คน

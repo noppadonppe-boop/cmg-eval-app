@@ -89,10 +89,16 @@ export default function Layout() {
 
   const isSupervisor = !isDeveloperUser(currentUser) && yearConfigs.some(c => c.supervisorId === currentUser?.id)
   const isAssignedStaff = !isDeveloperUser(currentUser) && yearConfigs.some(c => c.staffId === currentUser?.id)
+  const isKpiSupervisor = !isDeveloperUser(currentUser) && (data?.staffConfigs || []).some((config) =>
+    config.year === selectedYear && ['Q1', 'Q2', 'Q3', 'Q4'].some((quarter) =>
+      isVisibleUserId(config.staffId) &&
+      getEffectiveConfig(data.staffConfigs, config.staffId, selectedYear, quarter)?.supervisorId === currentUser?.id
+    )
+  )
 
   const navVisible = {
     '/eval': can('canSelfAssessCompetency') || can('canInputDiscipline') || can('canEvaluateJD') || isSupervisor || isAssignedStaff,
-    '/kpi': can('canAssignKPI') || can('canRespondKPI') || can('canViewAllEvaluations') || isSupervisor || isAssignedStaff,
+    '/kpi': can('canAssignKPI') || can('canRespondKPI') || can('canViewAllEvaluations') || isKpiSupervisor || isAssignedStaff,
     '/admin': can('canViewAdmin'),
     '/manual': true,
     '/': true,

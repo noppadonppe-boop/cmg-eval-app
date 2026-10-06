@@ -3,6 +3,8 @@ import { subscribeToApp, seedIfEmpty, persistUpdate, hasConfig } from '../servic
 import { useAuth } from './AuthContext'
 import { normalizePositions } from '../utils/userUtils'
 import { getKpiMaxPerItem, isKpiScorable, isKpiSkipped } from '../utils/kpiUtils'
+import { getEffectiveConfig, reconcileSupervisorChanges } from '../utils/staffConfigUtils'
+export { getEffectiveConfig } from '../utils/staffConfigUtils'
 
 const INITIAL_DATA = {
   users: [
@@ -34,30 +36,6 @@ const INITIAL_DATA = {
 
 /** ลำดับความสำคัญของ Role สำหรับเลือก primary role */
 const ROLE_PRIORITY = ['MasterAdmin', 'MD', 'GM', 'HRM', 'HR', 'Creator', 'Staff', 'Viewer']
-
-/** ลำดับ Quarter */
-const QUARTER_ORDER = { Q1: 1, Q2: 2, Q3: 3, Q4: 4 }
-
-/**
- * หา staffConfig ที่ effective สำหรับ (staffId, year, quarter) โดย:
- * 1. ลอง exact match (year, quarter, staffId)
- * 2. ถ้าไม่พบ → ลอง Q ก่อนหน้าแบบ descending (Q3→Q2→Q1)
- * 3. ถ้าไม่พบ → fallback config ที่ไม่มี quarter (data เก่า)
- */
-export function getEffectiveConfig(configs, staffId, year, quarter) {
-  const q = String(quarter || '').toUpperCase()
-  const qOrder = QUARTER_ORDER[q] || 0
-  if (qOrder > 0) {
-    const exact = configs.find((c) => c.staffId === staffId && c.year === year && c.quarter === q)
-    if (exact) return exact
-    for (let i = qOrder - 1; i >= 1; i--) {
-      const prevQ = Object.keys(QUARTER_ORDER).find((k) => QUARTER_ORDER[k] === i)
-      const prev = configs.find((c) => c.staffId === staffId && c.year === year && c.quarter === prevQ)
-      if (prev) return prev
-    }
-  }
-  return configs.find((c) => c.staffId === staffId && c.year === year && !c.quarter) || null
-}
 
 function getPrimaryRole(roles) {
   if (!Array.isArray(roles) || !roles.length) return 'Staff'
@@ -153,7 +131,7 @@ export function AppProvider({ children }) {
     const persistenceTarget = selectedYear && activeQuarter
       ? { year: selectedYear, quarter: activeQuarter }
       : null
-    setData((prev) => updater(prev))
+    setData((prev) => reconcileSupervisorChanges(prev, updater(prev)))
     if (hasConfig) {
       persistUpdate(updater, persistenceTarget).catch((e) => console.error('Firestore write error:', e))
     }
@@ -355,6 +333,9 @@ export function AppProvider({ children }) {
       if (!prev) return prev
       const prevKpis = prev?.kpis ?? []
       if (prevKpis.some((x) => x.id === id)) return prev
+      // Validate against the transaction's current hierarchy, including when
+      // an old supervisor submits a form opened before a department transfer.
+      if (getEffectiveConfig(prev.staffConfigs || [], kpi.staffId, kpi.year, kpi.quarter)?.supervisorId !== kpi.supervisorId) return prev
       return {
         ...prev,
         kpis: [

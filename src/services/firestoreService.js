@@ -1,5 +1,6 @@
 import { doc, getDoc, setDoc, onSnapshot, runTransaction } from 'firebase/firestore'
 import { db, hasConfig } from '../firebase'
+import { reconcileSupervisorChanges } from '../utils/staffConfigUtils'
 
 const COLLECTION_ID = 'CMG-eval-app'
 const ROOT_DOC_ID = 'root'
@@ -12,6 +13,7 @@ const DEFAULT_DATA = {
   activeQuarter: 'Q1',
   staffConfigs: [],
   kpis: [],
+  kpiReassignments: [],
   quarterlyEvaluations: [],
   scorePartSettings: {},
   competencyConfig: null,
@@ -58,6 +60,7 @@ function normalizeRootData(raw) {
     activeQuarter: normalizeQuarter(d.activeQuarter),
     staffConfigs: normalizeStaffConfigRecords(d.staffConfigs),
     kpis: normalizeQuarterTaggedRecords(d.kpis),
+    kpiReassignments: normalizeQuarterTaggedRecords(d.kpiReassignments),
     quarterlyEvaluations: normalizeQuarterTaggedRecords(d.quarterlyEvaluations),
     scorePartSettings: d.scorePartSettings && typeof d.scorePartSettings === 'object' ? d.scorePartSettings : DEFAULT_DATA.scorePartSettings,
     competencyConfig: d.competencyConfig && typeof d.competencyConfig === 'object' ? d.competencyConfig : null,
@@ -72,6 +75,7 @@ function toWritePayload(data) {
     activeQuarter: normalizeQuarter(data.activeQuarter),
     staffConfigs: data.staffConfigs ?? [],
     kpis: data.kpis ?? [],
+    kpiReassignments: data.kpiReassignments ?? [],
     quarterlyEvaluations: data.quarterlyEvaluations ?? [],
     scorePartSettings: data.scorePartSettings ?? {},
     competencyConfig: data.competencyConfig ?? null,
@@ -114,6 +118,7 @@ function quarterPayloadFromRoot(rootData, year, quarter) {
   return {
     staffConfigs: rootData.staffConfigs.filter((record) => isRecordForQuarter(record, year, quarter)),
     kpis: rootData.kpis.filter((record) => isRecordForQuarter(record, year, quarter)),
+    kpiReassignments: rootData.kpiReassignments.filter((record) => isRecordForQuarter(record, year, quarter)),
     quarterlyEvaluations: rootData.quarterlyEvaluations.filter((record) => isRecordForQuarter(record, year, quarter)),
     scorePartSettings: rootData.scorePartSettings?.[year] ?? rootData.scorePartSettings?.[String(year)] ?? null,
     competencyConfig: rootData.competencyConfig ?? null,
@@ -126,18 +131,21 @@ function parseQuarterSnapshot(snap, fallback) {
   return {
     staffConfigs: normalizeStaffConfigRecords(d.staffConfigs),
     kpis: normalizeQuarterTaggedRecords(d.kpis),
+    kpiReassignments: normalizeQuarterTaggedRecords(d.kpiReassignments),
     quarterlyEvaluations: normalizeQuarterTaggedRecords(d.quarterlyEvaluations),
     scorePartSettings: d.scorePartSettings && typeof d.scorePartSettings === 'object' ? d.scorePartSettings : null,
     competencyConfig: d.competencyConfig && typeof d.competencyConfig === 'object' ? d.competencyConfig : null,
   }
 }
 
-function mergeQuarterData(rootData, quarterData, year) {
+function mergeQuarterData(rootData, quarterData, year, quarter = rootData.activeQuarter) {
   const quarterDataList = Array.isArray(quarterData) ? quarterData : []
   const mergedScoreSettings = { ...(rootData.scorePartSettings || {}) }
   let mergedCompetencyConfig = rootData.competencyConfig
 
-  for (const data of quarterDataList) {
+  // Load records for every quarter, but use settings only through the active
+  // quarter so preparing future KPIs does not change today's evaluation form.
+  for (const data of quarterDataList.slice(0, getQuarterNumber(quarter) - 1)) {
     if (data?.scorePartSettings) mergedScoreSettings[year] = data.scorePartSettings
     if (data?.competencyConfig) mergedCompetencyConfig = data.competencyConfig
   }
@@ -151,6 +159,10 @@ function mergeQuarterData(rootData, quarterData, year) {
     kpis: mergeRecords([
       ...quarterDataList.map((data) => data.kpis),
       rootData.kpis,
+    ]),
+    kpiReassignments: mergeRecords([
+      ...quarterDataList.map((data) => data.kpiReassignments),
+      rootData.kpiReassignments,
     ]),
     quarterlyEvaluations: mergeRecords([
       ...quarterDataList.map((data) => data.quarterlyEvaluations),
@@ -177,15 +189,10 @@ function getActiveTarget(data, target) {
 }
 
 function rootPayloadAfterQuarterUpdate(rootData, next, target) {
-  const maxLoadedQuarter = getQuarterNumber(target.quarter)
   const staysInRoot = (record) => {
-    if (isLegacyQ1Record(record) || record?.year !== target.year) return true
-    return getQuarterNumber(normalizeQuarter(record.quarter)) > maxLoadedQuarter
+    return isLegacyQ1Record(record) || record?.year !== target.year
   }
-  const mergeRootField = (field) => mergeRecords([
-    (next[field] || []).filter(staysInRoot),
-    (rootData[field] || []).filter(staysInRoot),
-  ])
+  const mergeRootField = (field) => (next[field] || []).filter(staysInRoot)
   const rootScorePartSettings = { ...(next.scorePartSettings || {}) }
   const targetYearKey = String(target.year)
   if (Object.prototype.hasOwnProperty.call(rootData.scorePartSettings || {}, targetYearKey)) {
@@ -205,13 +212,14 @@ function rootPayloadAfterQuarterUpdate(rootData, next, target) {
     activeQuarter: next.activeQuarter,
     staffConfigs: mergeRootField('staffConfigs'),
     kpis: mergeRootField('kpis'),
+    kpiReassignments: mergeRootField('kpiReassignments'),
     quarterlyEvaluations: mergeRootField('quarterlyEvaluations'),
-    // The active year's setting belongs to the quarter document; keep all
-    // other years in root so actions such as Add Year are not lost.
-    scorePartSettings: rootScorePartSettings,
+    // Q1 settings stay in root. Q2+ settings belong to their quarter document;
+    // keep other years in root so actions such as Add Year are not lost.
+    scorePartSettings: target.quarter === 'Q1' ? next.scorePartSettings : rootScorePartSettings,
     // Competency configuration is copied to each Q2+ document when it is first
     // opened; root remains the legacy Q1 configuration.
-    competencyConfig: rootData.competencyConfig,
+    competencyConfig: target.quarter === 'Q1' ? next.competencyConfig : rootData.competencyConfig,
   })
 }
 
@@ -220,6 +228,7 @@ function quarterPayloadAfterUpdate(data, year, quarter) {
   return {
     staffConfigs: (data.staffConfigs || []).filter((record) => isRecordForQuarter(record, year, quarter)),
     kpis: (data.kpis || []).filter((record) => isRecordForQuarter(record, year, quarter)),
+    kpiReassignments: (data.kpiReassignments || []).filter((record) => isRecordForQuarter(record, year, quarter)),
     quarterlyEvaluations: (data.quarterlyEvaluations || []).filter((record) => isRecordForQuarter(record, year, quarter)),
     scorePartSettings,
     competencyConfig: data.competencyConfig ?? null,
@@ -262,13 +271,13 @@ export function subscribeToApp(callback) {
         return
       }
 
-      const { year, quarter } = getActiveTarget(rootData)
-      if (!year || quarter === 'Q1') {
+      const { year } = getActiveTarget(rootData)
+      if (!year) {
         callback(rootData)
         return
       }
 
-      const quarterNumbers = Array.from({ length: getQuarterNumber(quarter) - 1 }, (_, index) => index + 2)
+      const quarterNumbers = [2, 3, 4]
       const quarterStates = quarterNumbers.map((number) => {
         const q = QUARTERS[number - 1]
         return {
@@ -349,14 +358,16 @@ async function ensureQuarterData(year, quarter) {
       ...rootData,
       staffConfigs: removeMigratedQuarter('staffConfigs'),
       kpis: removeMigratedQuarter('kpis'),
+      kpiReassignments: removeMigratedQuarter('kpiReassignments'),
       quarterlyEvaluations: removeMigratedQuarter('quarterlyEvaluations'),
     }))
   })
 }
 
 /**
- * Apply an update transactionally. Q1 writes remain in root; Q2+ writes are
- * split between the legacy root (Q1/global fields) and root/{Qx_year}/data.
+ * Apply an update transactionally across all quarters of the selected year.
+ * Q1/global fields remain in root; Q2-Q4 records go to root/{Qx_year}/data,
+ * regardless of the active quarter. Only the target quarter's settings change.
  */
 export async function persistUpdate(updater, target = null) {
   if (!db) return
@@ -368,14 +379,14 @@ export async function persistUpdate(updater, target = null) {
     const rootData = parseSnapshot(rootSnap) ?? DEFAULT_DATA
     const effectiveTarget = getActiveTarget(rootData, requestedTarget)
 
-    if (!effectiveTarget.year || effectiveTarget.quarter === 'Q1') {
+    if (!effectiveTarget.year) {
       const current = rootData
-      const next = updater(current)
+      const next = reconcileSupervisorChanges(current, updater(current))
       transaction.set(rootRef, toWritePayload(next))
       return next
     }
 
-    const quarterNumbers = Array.from({ length: getQuarterNumber(effectiveTarget.quarter) - 1 }, (_, index) => index + 2)
+    const quarterNumbers = [2, 3, 4]
     const quarterRefs = quarterNumbers.map((number) => getQuarterDocRef(effectiveTarget.year, QUARTERS[number - 1]))
     const quarterSnaps = []
     for (const quarterRef of quarterRefs) {
@@ -385,14 +396,20 @@ export async function persistUpdate(updater, target = null) {
       snap,
       quarterPayloadFromRoot(rootData, effectiveTarget.year, QUARTERS[quarterNumbers[index] - 1])
     ))
-    const current = mergeQuarterData(rootData, quarterData, effectiveTarget.year)
-    const next = updater(current)
+    const current = mergeQuarterData(rootData, quarterData, effectiveTarget.year, effectiveTarget.quarter)
+    const next = reconcileSupervisorChanges(current, updater(current))
 
     transaction.set(rootRef, rootPayloadAfterQuarterUpdate(rootData, next, effectiveTarget))
-    transaction.set(
-      getQuarterDocRef(effectiveTarget.year, effectiveTarget.quarter),
-      quarterPayloadAfterUpdate(next, effectiveTarget.year, effectiveTarget.quarter)
-    )
+    quarterRefs.forEach((ref, index) => {
+      const quarter = QUARTERS[quarterNumbers[index] - 1]
+      const payload = quarterPayloadAfterUpdate(next, effectiveTarget.year, quarter)
+      // Cross-quarter KPI edits must preserve each quarter's own settings.
+      if (quarter !== effectiveTarget.quarter) {
+        payload.scorePartSettings = quarterData[index].scorePartSettings
+        payload.competencyConfig = quarterData[index].competencyConfig
+      }
+      transaction.set(ref, payload)
+    })
     return next
   })
 }

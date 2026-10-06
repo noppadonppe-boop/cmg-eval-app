@@ -32,6 +32,30 @@ const BLANK_FORM = {
   staffId: '', title: '', assessmentMethod: '', remark: '', quarter: 'Q1',
 }
 
+function QuarterFilterButton({ quarter, selected, onClick, staffCount, incompleteCount }) {
+  const incomplete = incompleteCount > 0
+  const statusLabel = staffCount === 0
+    ? 'ไม่มีพนักงานที่ต้องมอบหมาย KPI ใน Quarter นี้'
+    : incomplete
+      ? `ยังมอบหมาย KPI ไม่ครบ ${KPI_MAX_PER_QUARTER} ข้อ จำนวน ${incompleteCount} คน`
+      : `มอบหมาย KPI ครบ ${KPI_MAX_PER_QUARTER} ข้อแล้วทุกคน`
+  return (
+    <button type="button" onClick={onClick}
+      aria-pressed={selected}
+      aria-label={`${quarter}: ${statusLabel}`}
+      title={statusLabel}
+      className={`relative px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-600 ${
+        incomplete
+          ? `kpi-quarter-incomplete text-red-700 ${selected ? 'bg-red-100 border-red-400 font-bold' : 'bg-white border-red-200 hover:bg-red-50'}`
+          : selected
+            ? 'bg-gray-200 text-gray-800 border-gray-500 ring-1 ring-gray-500'
+            : 'bg-gray-100 text-gray-500 border-gray-300 hover:bg-gray-200'
+      }`}>
+      {quarter}
+    </button>
+  )
+}
+
 function getUserDisplayName(user) {
   if (!user) return ''
   if (user.name) return user.name
@@ -114,12 +138,12 @@ function ScoreSlider({ value, onChange, disabled, label, maxScore }) {
 // ─── Supervisor View ─────────────────────────────────────────────────────────
 
 function SupervisorView({ allUsers }) {
-  const { data, selectedYear, currentUser, addKpi, updateKpi, removeKpi } = useApp()
+  const { data, selectedYear, activeQuarter, currentUser, addKpi, updateKpi, removeKpi } = useApp()
   const [form, setForm] = useState(BLANK_FORM)
   const [editingId, setEditingId] = useState(null)
   const [errors, setErrors] = useState({})
   const [filterStaff, setFilterStaff] = useState('all')
-  const [filterQuarter, setFilterQuarter] = useState('Q1')
+  const [filterQuarter, setFilterQuarter] = useState(() => activeQuarter || 'Q1')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [assignOpen, setAssignOpen] = useState(false)
   const [drafts, setDrafts] = useState([])
@@ -152,9 +176,12 @@ function SupervisorView({ allUsers }) {
     ).length
 
   const existingCount = form.staffId ? countInQuarter(form.staffId, form.quarter, editingId) : 0
+  const canAssignQuarter = (staffId, quarter) =>
+    getEffectiveConfig(data.staffConfigs, staffId, selectedYear, quarter)?.supervisorId === currentUser.id
+  const canAssignSelectedQuarter = canAssignQuarter(form.staffId, form.quarter)
   const remainingSlots = Math.max(0, KPI_MAX_PER_QUARTER - existingCount)
-  const canSend = !editingId && remainingSlots > 0 && drafts.length === remainingSlots
-  const canAddDraft = !editingId && remainingSlots > 0 && drafts.length < remainingSlots
+  const canSend = canAssignSelectedQuarter && !editingId && remainingSlots > 0 && drafts.length === remainingSlots
+  const canAddDraft = canAssignSelectedQuarter && !editingId && remainingSlots > 0 && drafts.length < remainingSlots
 
   const previousQuarterIndex = QUARTERS.indexOf(form.quarter) - 1
   const previousQuarter = previousQuarterIndex >= 0 ? QUARTERS[previousQuarterIndex] : null
@@ -165,7 +192,7 @@ function SupervisorView({ allUsers }) {
       .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))
       .slice(0, KPI_MAX_PER_QUARTER)
     : []
-  const canDuplicate = !editingId
+  const canDuplicate = canAssignSelectedQuarter && !editingId
     && Boolean(previousQuarter)
     && previousQuarterKpis.length > 0
     && remainingSlots > 0
@@ -177,6 +204,8 @@ function SupervisorView({ allUsers }) {
   const validateEdit = () => {
     const e = {}
     if (!form.staffId) e.staffId = 'เลือกพนักงาน'
+    if (!canAssignSelectedQuarter) e.quota = 'คุณไม่ได้เป็น Supervisor ของพนักงานใน Quarter นี้'
+    if (existingCount >= KPI_MAX_PER_QUARTER) e.quota = `มี KPI ครบ ${KPI_MAX_PER_QUARTER} ข้อแล้วใน ${form.quarter}`
     if (!form.title.trim()) e.title = 'ระบุงานที่มอบหมาย'
     if (!form.assessmentMethod.trim()) e.assessmentMethod = 'ระบุวิธีการประเมิน'
     setErrors(e)
@@ -331,6 +360,7 @@ function SupervisorView({ allUsers }) {
           <strong>Part 3 — KPI (30 คะแนน):</strong> กำหนด KPI สูงสุด {KPI_MAX_PER_QUARTER} ข้อ/คน/Quarter
           · คะแนนต่อข้อ: <strong>1 ข้อ = {KPI_TOTAL_SCORE} คะแนน · 2 ข้อ = {KPI_TOTAL_SCORE / 2} คะแนน · 3 ข้อ = {KPI_TOTAL_SCORE / 3} คะแนน</strong>
           · Staff 40% + Supervisor 60% · สูตร: Staff_total×0.40 + Sup_total×0.60
+          <p className="mt-1">เลือก Q1–Q4 เพื่อมอบหมาย KPI ได้โดยตรง โดยไม่ต้องให้ Admin สลับ Quarter ของระบบ</p>
         </div>
       </div>
 
@@ -343,12 +373,16 @@ function SupervisorView({ allUsers }) {
           {myStaff.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
         </select>
         <div className="flex gap-1.5">
-          {QUARTERS.map((q) => (
-            <button key={q} onClick={() => setFilterQuarter(q)}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all ${filterQuarter === q ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400'}`}>
-              {q}
-            </button>
-          ))}
+          {QUARTERS.map((q) => {
+            const quarterStaff = myStaff.filter((staff) =>
+              (filterStaff === 'all' || staff.id === filterStaff) && canAssignQuarter(staff.id, q)
+            )
+            const incompleteCount = quarterStaff.filter((staff) => countInQuarter(staff.id, q) < KPI_MAX_PER_QUARTER).length
+            return (
+              <QuarterFilterButton key={q} quarter={q} selected={filterQuarter === q}
+                onClick={() => setFilterQuarter(q)} staffCount={quarterStaff.length} incompleteCount={incompleteCount} />
+            )
+          })}
         </div>
         <span className="ml-auto text-xs text-gray-400">รายการ KPI แสดงในหน้าต่าง "มอบหมาย KPI" · ให้คะแนนใน Evaluation Forms &gt; Part 3</span>
       </div>
@@ -377,7 +411,7 @@ function SupervisorView({ allUsers }) {
                 onClick={() => openAssign(staff.id)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
               >
-                <PlusCircle size={12} /> มอบหมาย KPI
+                <PlusCircle size={12} /> มอบหมาย KPI · {filterQuarter}
               </button>
             </div>
           </div>
@@ -412,13 +446,16 @@ function SupervisorView({ allUsers }) {
                   {QUARTERS.map((q) => {
                     const cnt = form.staffId ? countInQuarter(form.staffId, q, editingId) : 0
                     const full = cnt >= KPI_MAX_PER_QUARTER
-                    const canPick = form.staffId && !full
+                    const authorized = canAssignQuarter(form.staffId, q)
+                    const canPick = form.staffId && authorized && (!editingId || !full)
                     return (
                       <button
                         key={q}
                         type="button"
+                        disabled={!canPick}
+                        title={!authorized ? 'คุณไม่ได้เป็น Supervisor ใน Quarter นี้' : full ? `มี KPI ครบ ${KPI_MAX_PER_QUARTER} ข้อแล้ว` : `มอบหมาย KPI สำหรับ ${q}`}
                         onClick={() => {
-                          if (!canPick && form.quarter !== q) return
+                          if (!canPick || form.quarter === q) return
                           if (!editingId && drafts.length > 0) setDrafts([])
                           setForm({ ...form, quarter: q })
                           setErrors({})
@@ -426,7 +463,7 @@ function SupervisorView({ allUsers }) {
                         className={`flex-1 py-2 rounded-lg border text-xs font-semibold transition-all ${
                           form.quarter === q
                             ? 'bg-indigo-600 text-white border-indigo-600'
-                            : full
+                            : !canPick || full
                               ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed'
                               : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
                         }`}
@@ -437,6 +474,7 @@ function SupervisorView({ allUsers }) {
                     )
                   })}
                 </div>
+                {!canAssignSelectedQuarter && <p className="text-xs text-amber-600 mt-1">คุณไม่ได้เป็น Supervisor ใน {form.quarter} กรุณาเลือก Quarter ที่คุณดูแลพนักงานนี้</p>}
                 {errors.quota && <p className="text-xs text-red-500 mt-1">{errors.quota}</p>}
               </div>
 
@@ -683,7 +721,7 @@ function SupervisorView({ allUsers }) {
 // ─── Staff View ───────────────────────────────────────────────────────────────
 
 function StaffView({ allUsers }) {
-  const { data, selectedYear, activeQuarter, currentUser, respondKpi, saveEvaluation, getEvaluation } = useApp()
+  const { data, selectedYear, activeQuarter, currentUser, respondKpi } = useApp()
   const [rejectModal, setRejectModal] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
   const [rejectError, setRejectError] = useState('')
@@ -909,12 +947,19 @@ function OverviewView({ allUsers, canSkipKpi }) {
           {allUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
         </select>
         <div className="flex gap-1.5">
-          {QUARTERS.map((q) => (
-            <button key={q} onClick={() => setFilterQuarter(q)}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all ${filterQuarter === q ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400'}`}>
-              {q}
-            </button>
-          ))}
+          {QUARTERS.map((q) => {
+            const quarterStaff = filteredStaff.filter((staff) =>
+              getEffectiveConfig(data.staffConfigs, staff.id, selectedYear, q)?.supervisorId ||
+              yearKpis.some((kpi) => kpi.staffId === staff.id && kpi.quarter === q)
+            )
+            const incompleteCount = quarterStaff.filter((staff) =>
+              yearKpis.filter((kpi) => kpi.staffId === staff.id && kpi.quarter === q).length < KPI_MAX_PER_QUARTER
+            ).length
+            return (
+              <QuarterFilterButton key={q} quarter={q} selected={filterQuarter === q}
+                onClick={() => setFilterQuarter(q)} staffCount={quarterStaff.length} incompleteCount={incompleteCount} />
+            )
+          })}
         </div>
       </div>
 
