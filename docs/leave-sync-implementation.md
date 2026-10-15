@@ -1,0 +1,86 @@
+# Leave Sync Implementation
+
+วันที่ดำเนินการ: 15 ตุลาคม 2026
+
+## สรุปการดำเนินการ
+
+- เพิ่มการเชื่อมต่อ Firebase โปรเจกต์ลาแยกจาก Firebase ของแอพหลัก
+- อ่านข้อมูลจาก Collection รูปแบบ `leave_requests_20XX`
+- ใช้ Anonymous Authentication และอ่านข้อมูลแบบ Read-only เท่านั้น
+- เพิ่มปุ่ม `Sync Leave Data` ในหน้า Admin → Discipline
+- ไม่อ่านข้อมูลลาอัตโนมัติเมื่อเปิดหน้า เพื่อลดจำนวน Firebase Reads
+- Mapping รหัสพนักงานจากส่วนก่อน `_` ของ Document ID กับ `staffCode` ในแอพ
+- นำข้อมูลประเภทลาที่อนุมัติแล้วไปเติมใน Discipline รายไตรมาส/รายเดือน
+- บันทึกข้อมูล Sync Ledger และ Discipline ที่ Sync แล้วใน Firebase ของแอพหลัก
+- เก็บ `Last Sync`, Collection ต้นทาง, `sourceDocId`, สถานะ และเวลาแก้ไขต้นทาง
+
+## การป้องกันข้อมูลซ้ำ
+
+ใช้คีย์ถาวรจาก:
+
+```text
+sourceCollection::sourceDocId
+```
+
+การกด Sync ซ้ำจะทำงานแบบ Upsert:
+
+- เอกสารเดิมและข้อมูลไม่เปลี่ยน: `unchanged`
+- เอกสารเดิมแต่ข้อมูลเปลี่ยน: `updated`
+- เอกสารใหม่: `added`
+- ไม่พบพนักงานในแอพ: `unmatched`
+- เอกสารหายจากการ Full Sync: `missing`
+
+จะไม่สร้างรายการ Discipline ซ้ำสำหรับพนักงาน/ปี/ไตรมาสเดิม
+
+## โครงสร้างข้อมูลในแอพหลัก
+
+ข้อมูลต้นทางที่อ่านแล้วจะถูกเก็บในฟิลด์ `leaveSyncRecords` ของเอกสารข้อมูลแอพหลัก และข้อมูลสรุปการ Sync จะเก็บใน `leaveSyncMeta` โดยข้อมูลคะแนนยังคงอยู่ใน `quarterlyEvaluations` ของ `part: "part2"` ตามโครงสร้างเดิม
+
+ฟิลด์ที่นำเข้าจากการลา:
+
+- `sick` → ลาป่วย
+- `personal` → ลากิจ/ธุระส่วนตัว
+- `vacation` → ลาพักร้อน/ลาประจำปี
+
+เมื่อ Full Sync แล้วไม่พบรายการลาที่อนุมัติของพนักงาน ระบบจะใส่ค่า leave เป็น `0` ในทุกเดือนของปีนั้น ทำให้ Discipline แสดงคะแนนเต็ม 20 คะแนนในกรณีไม่มีข้อมูลขาด/ลา โดยยังคงข้อมูล `warning` หรือค่าที่ HR กรอกเองไว้
+
+ฟิลด์ `absent`, `warning`, `note` และโควต้ายังคงเป็นข้อมูลที่ HR จัดการในแอพ
+
+## การลดจำนวน Reads
+
+- ครั้งแรกของแต่ละปีจะอ่าน Collection เต็ม
+- ครั้งถัดไปจะพยายามอ่านเฉพาะเอกสารที่ `updated_at` มากกว่า Last Sync
+- หากข้อมูลต้นทางไม่มี `updated_at` ที่ใช้ได้ ระบบจะกลับไป Full Sync เพื่อความถูกต้อง
+
+หมายเหตุ: การไม่บันทึกข้อมูลซ้ำทำได้จาก `sourceDocId`; ส่วนการไม่อ่านเอกสารเดิมซ้ำขึ้นอยู่กับการมีอยู่และความสม่ำเสมอของฟิลด์ `updated_at` ใน Firebase ต้นทาง
+
+## ไฟล์สำคัญ
+
+- `src/firebase.js` — Firebase app แยกสำหรับโปรเจกต์ลา
+- `src/services/leaveService.js` — Anonymous read และ normalize ข้อมูลต้นทาง
+- `src/services/leaveSyncUtils.js` — Merge, deduplicate และคำนวณ Discipline
+- `src/context/AppContext.jsx` — บันทึก Sync Ledger และ quarterly evaluations
+- `src/components/admin/DisciplineTab.jsx` — ปุ่ม Sync และสถานะ Last Sync
+- `.env.example` — ตัวแปรสภาพแวดล้อมของ Firebase โปรเจกต์ลา
+
+## เงื่อนไขฝั่ง Firebase โปรเจกต์ลา
+
+ระบบจะพยายามใช้ Anonymous Authentication ก่อน หากโปรเจกต์ยังไม่ได้เปิด Anonymous Auth แต่ Firestore อนุญาต Public Read ระบบจะอ่านต่อได้โดยไม่ต้อง Login เพื่อรองรับการตั้งค่าปัจจุบัน
+
+การตั้งค่าที่แนะนำคือเปิด Anonymous Authentication และตั้ง Firestore Rules ให้ผู้ใช้ Anonymous อ่านได้ แต่ไม่อนุญาตให้เขียน เช่น:
+
+```text
+allow read: if request.auth != null;
+allow write: if false;
+```
+
+หากต้องการใช้ Public Read โดยไม่เปิด Anonymous Authentication ให้ใช้กฎแบบ Read-only แทนกฎในภาพที่เป็น `allow read, write: if true;`:
+
+```text
+allow read: if true;
+allow write: if false;
+```
+
+กฎ `allow read, write: if true;` เปิดให้บุคคลทั่วไปแก้ไขหรือลบข้อมูลได้ จึงไม่ควรใช้กับข้อมูลจริง
+
+ระบบจะไม่เขียนสถานะกลับไปยัง Firebase โปรเจกต์ลา สถานะ Sync ทั้งหมดจะถูกบันทึกใน Firebase ของแอพหลักเท่านั้น

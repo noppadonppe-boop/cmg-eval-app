@@ -1,21 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, User, Search, CheckCircle2, Clock, X, Loader } from 'lucide-react';
+import { Shield, User, Search, CheckCircle2, Clock, X, Loader, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
 import { ROLE_AVATAR_BG } from '../../hooks/useRBAC';
 import Part2Discipline from '../eval/Part2Discipline';
 import { subscribeAllUsers } from '../../services/authService';
+import { fetchLeaveRecords } from '../../services/leaveService';
 import { filterVisibleUsers } from '../../utils/userUtils';
 
 export default function DisciplineTab() {
   const { userProfile, firebaseUser } = useAuth();
-  const { selectedYear, activeQuarter, getEvaluationForPart } = useApp();
+  const { data, selectedYear, activeQuarter, getEvaluationForPart, syncLeaveData } = useApp();
   
   const [search, setSearch] = useState('');
   const [selectedUser, setSelectedUser] = useState(null);
   
   const [fbUsers, setFbUsers] = useState([]);
   const [fbLoading, setFbLoading] = useState(true);
+  const [leaveSyncing, setLeaveSyncing] = useState(false);
+  const [leaveSyncResult, setLeaveSyncResult] = useState(null);
+  const [leaveSyncError, setLeaveSyncError] = useState('');
 
   useEffect(() => {
     const unsub = subscribeAllUsers((list) => {
@@ -38,6 +42,34 @@ export default function DisciplineTab() {
                (u.email || '').toLowerCase().includes(search.toLowerCase());
       })
     : visibleUsers;
+
+  const lastSyncMeta = data?.leaveSyncMeta?.[String(selectedYear)] || null;
+
+  const handleLeaveSync = async () => {
+    if (!selectedYear || leaveSyncing) return;
+    setLeaveSyncing(true);
+    setLeaveSyncError('');
+    setLeaveSyncResult(null);
+
+    try {
+      const fetched = await fetchLeaveRecords(selectedYear, lastSyncMeta);
+      const summary = await syncLeaveData({
+        year: selectedYear,
+        sourceCollection: fetched.collectionName,
+        sourceRecords: fetched.records,
+        users: visibleUsers,
+        fullSync: !fetched.incremental,
+        maxSourceUpdatedAt: fetched.maxSourceUpdatedAt,
+        incrementalSafe: fetched.incrementalSafe,
+      });
+      setLeaveSyncResult({ ...summary, incremental: fetched.incremental });
+    } catch (error) {
+      console.error('Leave sync error:', error);
+      setLeaveSyncError(error?.message || 'ไม่สามารถ Sync ข้อมูลการลาได้');
+    } finally {
+      setLeaveSyncing(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -72,16 +104,53 @@ export default function DisciplineTab() {
             </div>
           </div>
           
-          <div className="relative w-full sm:w-64">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="ค้นหาชื่อ, อีเมล..."
-              className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-            />
+          <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto">
+            <div className="relative w-full sm:w-64">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="ค้นหาชื่อ, อีเมล..."
+                className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleLeaveSync}
+              disabled={leaveSyncing || fbLoading || !selectedYear}
+              className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              title="อ่านข้อมูลลาและบันทึกเข้าแอพนี้"
+            >
+              <RefreshCw size={14} className={leaveSyncing ? 'animate-spin' : ''} />
+              {leaveSyncing ? 'กำลัง Sync...' : 'Sync Leave Data'}
+            </button>
           </div>
+        </div>
+
+        <div className="px-5 py-2.5 border-b border-gray-100 bg-gray-50/70 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+          <span className="text-gray-500">
+            Last Sync:{' '}
+            <strong className="text-gray-700">
+              {lastSyncMeta?.lastSyncAt ? new Date(lastSyncMeta.lastSyncAt).toLocaleString('th-TH') : 'ยังไม่เคย Sync'}
+            </strong>
+          </span>
+          {lastSyncMeta?.status === 'synced' && (
+            <span className="text-green-700 inline-flex items-center gap-1 font-semibold">
+              <CheckCircle2 size={13} /> Synced
+            </span>
+          )}
+          {leaveSyncResult && (
+            <span className="text-green-700 inline-flex items-center gap-1">
+              <CheckCircle2 size={13} />
+              เพิ่ม {leaveSyncResult.added} · อัปเดต {leaveSyncResult.updated} · ไม่เปลี่ยนแปลง {leaveSyncResult.unchanged}
+            </span>
+          )}
+          {leaveSyncError && (
+            <span className="text-red-600 inline-flex items-center gap-1">
+              <AlertCircle size={13} /> {leaveSyncError}
+            </span>
+          )}
         </div>
         
         {/* User List Table */}
@@ -113,6 +182,7 @@ export default function DisciplineTab() {
                   const record = getEvaluationForPart(selectedYear, activeQuarter, user.uid, 'part2');
                   const hasRecord = !!record && Object.keys(record.months || {}).length > 0;
                   const hrmApproved = record?.hrmApproved;
+                  const leaveSynced = record?.leaveSync?.status === 'synced';
                   
                   const userName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email || 'Unknown';
                   const userRole = user.roles?.[0] || 'Staff';
@@ -143,9 +213,9 @@ export default function DisciplineTab() {
                       <td className="px-5 py-3.5 text-right">
                         <div className="flex items-center justify-end">
                           {hasRecord ? (
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold ${hrmApproved ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold ${leaveSynced ? 'bg-indigo-100 text-indigo-700' : hrmApproved ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
                               <CheckCircle2 size={13} />
-                              {hrmApproved ? 'อนุมัติแล้ว' : 'บันทึกแล้ว'}
+                              {leaveSynced ? 'Synced' : hrmApproved ? 'อนุมัติแล้ว' : 'บันทึกแล้ว'}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-500 mb-0">

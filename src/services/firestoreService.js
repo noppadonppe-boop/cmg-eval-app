@@ -15,6 +15,8 @@ const DEFAULT_DATA = {
   kpis: [],
   kpiReassignments: [],
   quarterlyEvaluations: [],
+  leaveSyncRecords: [],
+  leaveSyncMeta: {},
   scorePartSettings: {},
   competencyConfig: null,
 }
@@ -62,6 +64,8 @@ function normalizeRootData(raw) {
     kpis: normalizeQuarterTaggedRecords(d.kpis),
     kpiReassignments: normalizeQuarterTaggedRecords(d.kpiReassignments),
     quarterlyEvaluations: normalizeQuarterTaggedRecords(d.quarterlyEvaluations),
+    leaveSyncRecords: Array.isArray(d.leaveSyncRecords) ? d.leaveSyncRecords : DEFAULT_DATA.leaveSyncRecords,
+    leaveSyncMeta: d.leaveSyncMeta && typeof d.leaveSyncMeta === 'object' ? d.leaveSyncMeta : DEFAULT_DATA.leaveSyncMeta,
     scorePartSettings: d.scorePartSettings && typeof d.scorePartSettings === 'object' ? d.scorePartSettings : DEFAULT_DATA.scorePartSettings,
     competencyConfig: d.competencyConfig && typeof d.competencyConfig === 'object' ? d.competencyConfig : null,
   }
@@ -77,6 +81,8 @@ function toWritePayload(data) {
     kpis: data.kpis ?? [],
     kpiReassignments: data.kpiReassignments ?? [],
     quarterlyEvaluations: data.quarterlyEvaluations ?? [],
+    leaveSyncRecords: data.leaveSyncRecords ?? [],
+    leaveSyncMeta: data.leaveSyncMeta ?? {},
     scorePartSettings: data.scorePartSettings ?? {},
     competencyConfig: data.competencyConfig ?? null,
   }
@@ -214,6 +220,8 @@ function rootPayloadAfterQuarterUpdate(rootData, next, target) {
     kpis: mergeRootField('kpis'),
     kpiReassignments: mergeRootField('kpiReassignments'),
     quarterlyEvaluations: mergeRootField('quarterlyEvaluations'),
+    leaveSyncRecords: next.leaveSyncRecords ?? rootData.leaveSyncRecords,
+    leaveSyncMeta: next.leaveSyncMeta ?? rootData.leaveSyncMeta,
     // Q1 settings stay in root. Q2+ settings belong to their quarter document;
     // keep other years in root so actions such as Add Year are not lost.
     scorePartSettings: target.quarter === 'Q1' ? next.scorePartSettings : rootScorePartSettings,

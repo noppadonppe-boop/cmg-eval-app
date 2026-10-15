@@ -4,6 +4,7 @@ import { useAuth } from './AuthContext'
 import { normalizePositions } from '../utils/userUtils'
 import { getKpiMaxPerItem, isKpiScorable, isKpiSkipped } from '../utils/kpiUtils'
 import { getEffectiveConfig, reconcileSupervisorChanges } from '../utils/staffConfigUtils'
+import { applyLeaveSyncToEvaluations, mergeLeaveSyncRecords } from '../services/leaveSyncUtils'
 export { getEffectiveConfig } from '../utils/staffConfigUtils'
 
 const INITIAL_DATA = {
@@ -31,6 +32,8 @@ const INITIAL_DATA = {
   ],
   kpis: [],
   quarterlyEvaluations: [],
+  leaveSyncRecords: [],
+  leaveSyncMeta: {},
   scorePartSettings: {},
 }
 
@@ -458,6 +461,77 @@ export function AppProvider({ children }) {
     })
   }
 
+  const syncLeaveData = async ({
+    year,
+    sourceCollection,
+    sourceRecords,
+    users,
+    fullSync = false,
+    maxSourceUpdatedAt = '',
+    incrementalSafe = false,
+  }) => {
+    const syncAt = new Date().toISOString()
+    let summary = null
+
+    const applySync = (prev) => {
+      const merged = mergeLeaveSyncRecords(
+        prev?.leaveSyncRecords ?? [],
+        sourceRecords ?? [],
+        {
+          year,
+          sourceCollection,
+          users,
+          fullSync,
+          now: syncAt,
+        },
+      )
+      const applied = applyLeaveSyncToEvaluations({
+        evaluations: prev?.quarterlyEvaluations ?? [],
+        records: merged.records,
+        users,
+        year,
+        sourceCollection,
+        currentUserId: currentUser?.id,
+        now: syncAt,
+        fullSync,
+      })
+      const previousMeta = prev?.leaveSyncMeta?.[String(year)] || {}
+      const nextMeta = {
+        ...previousMeta,
+        status: 'synced',
+        sourceCollection,
+        lastSyncAt: syncAt,
+        lastSourceUpdatedAt: maxSourceUpdatedAt || previousMeta.lastSourceUpdatedAt || '',
+        incrementalSafe: Boolean(incrementalSafe),
+        lastResult: merged.stats,
+      }
+      summary = {
+        ...merged.stats,
+        evaluationCount: applied.grouped.size,
+        lastSyncAt: syncAt,
+      }
+      return {
+        ...prev,
+        leaveSyncRecords: merged.records,
+        leaveSyncMeta: {
+          ...(prev?.leaveSyncMeta || {}),
+          [String(year)]: nextMeta,
+        },
+        quarterlyEvaluations: applied.evaluations,
+      }
+    }
+
+    // Update the UI immediately, then await the same transaction so the
+    // caller can show success only after the current app has saved the data.
+    setData((prev) => reconcileSupervisorChanges(prev, applySync(prev)))
+    if (hasConfig) {
+      await persistUpdate(applySync, selectedYear && activeQuarter
+        ? { year: selectedYear, quarter: activeQuarter }
+        : null)
+    }
+    return summary || { fetched: 0, added: 0, updated: 0, unchanged: 0, unmatched: 0, missing: 0 }
+  }
+
   const removeEvaluation = (evalRecord) => {
     if (!evalRecord) return
     const roles = Array.isArray(currentUser?.roles)
@@ -563,6 +637,7 @@ export function AppProvider({ children }) {
         respondKpi,
         resetEvaluationsForYear,
         saveEvaluation,
+        syncLeaveData,
         removeEvaluation,
         getEvaluation,
         getEvaluationForPart,
