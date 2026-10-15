@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useApp } from '../../context/AppContext'
 import { ROLE_AVATAR_BG } from '../../hooks/useRBAC'
 import { CheckCircle2, Info, ChevronRight, Shield, Lock, ChevronDown, ChevronUp } from 'lucide-react'
+import { calculateMonthScore, getDisciplineBreakdown, getDisciplineRulesForYear } from '../../utils/disciplineRules'
 
 const EVAL_ROLE_BADGE = {
   Staff:       'bg-blue-100 text-blue-800 ring-blue-200',
@@ -12,13 +13,14 @@ const EVAL_ROLE_BADGE = {
 }
 
 export default function Part2Acknowledgment({ staffId, quarter, year, evaluatorRole = 'Staff', onComplete }) {
-  const { currentUser, getUserById, getEvaluationForPart, saveEvaluation } = useApp()
+  const { data, currentUser, getUserById, getEvaluationForPart, saveEvaluation } = useApp()
   
   const existing = getEvaluationForPart(year, quarter, staffId, 'part2')
   const [acknowledged, setAcknowledged] = useState(!!existing?.acknowledged || !!existing)
   const [showDetails, setShowDetails] = useState(true)
   
   const staff = getUserById(staffId)
+  const disciplineRules = getDisciplineRulesForYear(data, year)
   
   const ctxRole = evaluatorRole
 
@@ -41,25 +43,7 @@ export default function Part2Acknowledgment({ staffId, quarter, year, evaluatorR
   const quarterScore = existing?.scaledScore ?? existing?.rawTotal ?? null
   const months = existing?.months || {}
   
-  // Deduction breakdown helper
-  const getMonthScore = (m) => {
-    if (!m) return null
-    const s = (v) => (v === '' || v === undefined ? null : Number(v))
-    const sick = s(m.sick)
-    const personal = s(m.personal)
-    const vacation = s(m.vacation)
-    const absent = s(m.absent)
-    const warning = s(m.warning)
-    const quota = Number(m.vacationQuota) || 0
-    if ([sick, personal, vacation, absent, warning].every(v => v === null)) return null
-    const ded = 
-      (sick <= 5 ? 0 : sick <= 10 ? -1 : sick <= 20 ? -2 : -4) +
-      (personal <= 2 ? 0 : personal <= 4 ? -1 : personal <= 6 ? -2 : -3) +
-      (vacation - quota <= 0 ? 0 : vacation - quota <= 3 ? -1 : -2) +
-      (absent === 0 ? 0 : absent === 1 ? -3 : absent === 2 ? -5 : -8) +
-      (warning === 0 ? 0 : warning === 1 ? -2 : -3)
-    return Math.max(0, 20 + ded)
-  }
+  const getMonthScore = (month) => calculateMonthScore(month, disciplineRules)
 
   const monthNames = { Q1: ['ม.ค.', 'ก.พ.', 'มี.ค.'], Q2: ['เม.ย.', 'พ.ค.', 'มิ.ย.'], Q3: ['ก.ค.', 'ส.ค.', 'ก.ย.'], Q4: ['ต.ค.', 'พ.ย.', 'ธ.ค.'] }
   const mNames = monthNames[quarter] || ['M1', 'M2', 'M3']
@@ -98,11 +82,6 @@ export default function Part2Acknowledgment({ staffId, quarter, year, evaluatorR
                 <span className="text-sm font-medium text-gray-400 ml-1">/ 20</span>
               </p>
             </div>
-            {existing?.hrmApproved && (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
-                <Lock size={11} /> อนุมัติแล้ว
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -112,8 +91,8 @@ export default function Part2Acknowledgment({ staffId, quarter, year, evaluatorR
         <Info size={14} className="shrink-0 mt-0.5 text-blue-500" />
         <div>
           <p className="font-semibold mb-1">Part 2 — Discipline (20 คะแนน)</p>
-          <p>ส่วนนี้เป็นการ<b>รับทราบข้อมูลวินัย</b>ที่ HR เป็นผู้บันทึกข้อมูลขาด/ลา/มาสาย และ HRM อนุมัติแล้ว</p>
-          {quarterScore === null && <p className="mt-1 text-amber-600 font-medium">ยังไม่มีข้อมูลวินัยจาก HR — กรุณารอ HR บันทึกข้อมูล</p>}
+          <p>ส่วนนี้เป็นการ<b>รับทราบข้อมูลวินัย</b>ที่ HR เป็นผู้บันทึก และข้อมูลการลาถูกนำเข้าด้วยการ Sync</p>
+          {quarterScore === null && <p className="mt-1 text-amber-600 font-medium">ยังไม่มีข้อมูลวินัยจาก HR หรือการ Sync — กรุณารอข้อมูล</p>}
           {quarterScore !== null && !acknowledged && <p className="mt-1 text-blue-600">กรุณากด "รับทราบ" เพื่อดำเนินการต่อไปยัง Part 3</p>}
         </div>
       </div>
@@ -146,11 +125,13 @@ export default function Part2Acknowledgment({ staffId, quarter, year, evaluatorR
                   const warning = Number(m?.warning) || 0
                   const quota = Number(m?.vacationQuota) || 0
                   const vacationOver = Math.max(0, vacation - quota)
-                  const dedSick = sick <= 5 ? 0 : sick <= 10 ? -1 : sick <= 20 ? -2 : -4
-                  const dedPersonal = personal <= 2 ? 0 : personal <= 4 ? -1 : personal <= 6 ? -2 : -3
-                  const dedVacation = vacationOver <= 0 ? 0 : vacationOver <= 3 ? -1 : -2
-                  const dedAbsent = absent === 0 ? 0 : absent === 1 ? -3 : absent === 2 ? -5 : -8
-                  const dedWarning = warning === 0 ? 0 : warning === 1 ? -2 : -3
+                  const breakdown = getDisciplineBreakdown(m, disciplineRules)
+                  const deductionFor = (label) => breakdown.find((item) => item.label === label)?.ded ?? 0
+                  const dedSick = deductionFor('ลาป่วย')
+                  const dedPersonal = deductionFor('ลากิจ')
+                  const dedVacation = deductionFor('ลาพักร้อน')
+                  const dedAbsent = deductionFor('ขาดงาน (ไม่ลา)')
+                  const dedWarning = deductionFor('ใบเตือน')
                   
                   return (
                     <div key={mk} className={`rounded-xl border overflow-hidden ${s === null ? 'border-gray-200 bg-gray-50' : s >= 18 ? 'border-green-200' : s >= 14 ? 'border-yellow-200' : 'border-red-200'}`}>

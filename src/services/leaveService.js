@@ -85,8 +85,28 @@ function normalizeText(value) {
   return String(value ?? '').trim().toLowerCase()
 }
 
+function addSourceUserLookup(lookup, key, user) {
+  const value = String(key ?? '').trim()
+  if (!value) return
+  lookup.set(value, user)
+  lookup.set(normalizeText(value), user)
+}
+
+function buildSourceUserLookup(userSnapshots) {
+  const lookup = new Map()
+  for (const snapshot of userSnapshots) {
+    const user = snapshot.data() || {}
+    addSourceUserLookup(lookup, snapshot.id, user)
+    addSourceUserLookup(lookup, user.id, user)
+    addSourceUserLookup(lookup, user.uid, user)
+    addSourceUserLookup(lookup, user.user_id, user)
+  }
+  return lookup
+}
+
 function stableFingerprint(record) {
   return JSON.stringify([
+    record.userId,
     record.employeeCode,
     record.status,
     record.type,
@@ -100,20 +120,32 @@ function stableFingerprint(record) {
   ])
 }
 
-function normalizeSourceRecord(documentSnapshot, collectionName, year) {
+function normalizeSourceRecord(documentSnapshot, collectionName, year, sourceUsers) {
   const source = documentSnapshot.data() || {}
   const sourceDocId = documentSnapshot.id
+  const userId = String(source.user_id ?? source.userId ?? extractEmployeeCode(sourceDocId)).trim()
+  const sourceUser = sourceUsers?.get(userId) || sourceUsers?.get(normalizeText(userId))
   const record = {
     year,
     sourceCollection: collectionName,
     sourceDocId,
     sourceKey: `${collectionName}::${sourceDocId}`,
-    employeeCode: extractEmployeeCode(sourceDocId),
-    status: normalizeText(source.status),
-    type: normalizeText(source.type || source.leave_type),
-    startDate: toDateOnly(source.start_date ?? source.startDate),
-    endDate: toDateOnly(source.end_date ?? source.endDate),
-    totalDays: toNumber(source.total_days ?? source.totalDays, 0),
+    userId,
+    employeeCode: String(
+      source.employee_id
+      ?? source.employeeId
+      ?? source.employee_code
+      ?? source.employeeCode
+      ?? sourceUser?.employee_id
+      ?? sourceUser?.employeeId
+      ?? sourceUser?.staffCode
+      ?? extractEmployeeCode(sourceDocId),
+    ).trim(),
+    status: normalizeText(source.status ?? source.approval_status ?? source.approvalStatus),
+    type: normalizeText(source.type ?? source.leave_type ?? source.leaveType ?? source.category),
+    startDate: toDateOnly(source.start_date ?? source.startDate ?? source.from_date ?? source.fromDate),
+    endDate: toDateOnly(source.end_date ?? source.endDate ?? source.to_date ?? source.toDate),
+    totalDays: toNumber(source.total_days ?? source.totalDays ?? source.days ?? source.duration, 0),
     isHalfDay: toBoolean(source.is_half_day ?? source.isHalfDay),
     halfDayPeriod: normalizeText(source.half_day_period ?? source.halfDayPeriod),
     attendanceSyncDates: Array.isArray(source.attendance_sync_dates)
@@ -155,11 +187,14 @@ export async function fetchLeaveRecords(year, syncMeta = null) {
 
   const collectionName = `leave_requests_${year}`
   const sourceRef = collection(leaveDb, collectionName)
+  let sourceUsers
   const cursorDate = getCursorDate(syncMeta)
   let incremental = Boolean(cursorDate)
   let snapshot
 
   try {
+    const userSnapshot = await getDocs(collection(leaveDb, 'users'))
+    sourceUsers = buildSourceUserLookup(userSnapshot.docs)
     snapshot = incremental
       ? await getDocs(query(sourceRef, where('updated_at', '>', Timestamp.fromDate(cursorDate))))
       : await getDocs(sourceRef)
@@ -177,7 +212,7 @@ export async function fetchLeaveRecords(year, syncMeta = null) {
   }
 
   const records = snapshot.docs.map((documentSnapshot) => (
-    normalizeSourceRecord(documentSnapshot, collectionName, year)
+    normalizeSourceRecord(documentSnapshot, collectionName, year, sourceUsers)
   ))
   const allHaveUpdatedAt = records.every((record) => Boolean(record.sourceUpdatedAt))
   const maxSourceUpdatedAt = getLatestIso([

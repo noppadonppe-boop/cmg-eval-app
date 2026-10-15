@@ -17,6 +17,7 @@ const DEFAULT_DATA = {
   quarterlyEvaluations: [],
   leaveSyncRecords: [],
   leaveSyncMeta: {},
+  disciplineRulesByYear: {},
   scorePartSettings: {},
   competencyConfig: null,
 }
@@ -66,6 +67,7 @@ function normalizeRootData(raw) {
     quarterlyEvaluations: normalizeQuarterTaggedRecords(d.quarterlyEvaluations),
     leaveSyncRecords: Array.isArray(d.leaveSyncRecords) ? d.leaveSyncRecords : DEFAULT_DATA.leaveSyncRecords,
     leaveSyncMeta: d.leaveSyncMeta && typeof d.leaveSyncMeta === 'object' ? d.leaveSyncMeta : DEFAULT_DATA.leaveSyncMeta,
+    disciplineRulesByYear: d.disciplineRulesByYear && typeof d.disciplineRulesByYear === 'object' ? d.disciplineRulesByYear : DEFAULT_DATA.disciplineRulesByYear,
     scorePartSettings: d.scorePartSettings && typeof d.scorePartSettings === 'object' ? d.scorePartSettings : DEFAULT_DATA.scorePartSettings,
     competencyConfig: d.competencyConfig && typeof d.competencyConfig === 'object' ? d.competencyConfig : null,
   }
@@ -83,6 +85,7 @@ function toWritePayload(data) {
     quarterlyEvaluations: data.quarterlyEvaluations ?? [],
     leaveSyncRecords: data.leaveSyncRecords ?? [],
     leaveSyncMeta: data.leaveSyncMeta ?? {},
+    disciplineRulesByYear: data.disciplineRulesByYear ?? {},
     scorePartSettings: data.scorePartSettings ?? {},
     competencyConfig: data.competencyConfig ?? null,
   }
@@ -222,6 +225,7 @@ function rootPayloadAfterQuarterUpdate(rootData, next, target) {
     quarterlyEvaluations: mergeRootField('quarterlyEvaluations'),
     leaveSyncRecords: next.leaveSyncRecords ?? rootData.leaveSyncRecords,
     leaveSyncMeta: next.leaveSyncMeta ?? rootData.leaveSyncMeta,
+    disciplineRulesByYear: next.disciplineRulesByYear ?? rootData.disciplineRulesByYear,
     // Q1 settings stay in root. Q2+ settings belong to their quarter document;
     // keep other years in root so actions such as Add Year are not lost.
     scorePartSettings: target.quarter === 'Q1' ? next.scorePartSettings : rootScorePartSettings,

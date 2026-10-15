@@ -5,6 +5,7 @@ import { normalizePositions } from '../utils/userUtils'
 import { getKpiMaxPerItem, isKpiScorable, isKpiSkipped } from '../utils/kpiUtils'
 import { getEffectiveConfig, reconcileSupervisorChanges } from '../utils/staffConfigUtils'
 import { applyLeaveSyncToEvaluations, mergeLeaveSyncRecords } from '../services/leaveSyncUtils'
+import { getDisciplineRulesForYear } from '../utils/disciplineRules'
 export { getEffectiveConfig } from '../utils/staffConfigUtils'
 
 const INITIAL_DATA = {
@@ -34,6 +35,7 @@ const INITIAL_DATA = {
   quarterlyEvaluations: [],
   leaveSyncRecords: [],
   leaveSyncMeta: {},
+  disciplineRulesByYear: {},
   scorePartSettings: {},
 }
 
@@ -214,6 +216,12 @@ export function AppProvider({ children }) {
             part3: prev.scorePartSettings?.[lastYear]?.part3 !== false,
             part4: prev.scorePartSettings?.[lastYear]?.part4 !== false,
           },
+        },
+        disciplineRulesByYear: {
+          ...(prev.disciplineRulesByYear ?? {}),
+          ...(Array.isArray(prev.disciplineRulesByYear?.[String(lastYear)])
+            ? { [newYear]: prev.disciplineRulesByYear[String(lastYear)].map((rule) => ({ ...rule })) }
+            : {}),
         },
       }
     })
@@ -494,6 +502,7 @@ export function AppProvider({ children }) {
         currentUserId: currentUser?.id,
         now: syncAt,
         fullSync,
+        disciplineRules: getDisciplineRulesForYear(prev, year),
       })
       const previousMeta = prev?.leaveSyncMeta?.[String(year)] || {}
       const nextMeta = {
@@ -508,6 +517,7 @@ export function AppProvider({ children }) {
       summary = {
         ...merged.stats,
         evaluationCount: applied.grouped.size,
+        syncedStaffCount: applied.syncedStaffCount,
         lastSyncAt: syncAt,
       }
       return {

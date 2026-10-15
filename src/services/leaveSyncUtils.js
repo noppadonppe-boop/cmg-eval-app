@@ -1,9 +1,11 @@
+import { calculateMonthScore as calculateConfiguredMonthScore, calculateQuarterScore as calculateConfiguredQuarterScore } from '../utils/disciplineRules'
+
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4']
 
 const LEAVE_TYPE_KEYS = {
-  sick: ['sick', 'medical'],
-  personal: ['personal', 'business', 'errand'],
-  vacation: ['vacation', 'annual', 'holiday'],
+  sick: ['sick', 'medical', 'ป่วย', 'ลาป่วย'],
+  personal: ['personal', 'business', 'errand', 'กิจ', 'ลากิจ', 'ธุระ'],
+  vacation: ['vacation', 'annual', 'holiday', 'พักร้อน', 'ลาพักร้อน'],
 }
 
 function normalizeCode(value) {
@@ -48,7 +50,10 @@ function getLeaveType(type) {
 }
 
 function isApproved(record) {
-  return ['approved', 'approve', 'อนุมัติ', 'อนุมัติแล้ว'].includes(normalizeCode(record.status))
+  const status = normalizeCode(record.status)
+  return ['approved', 'approve', 'อนุมัติ', 'อนุมัติแล้ว'].includes(status)
+    || status.includes('approved')
+    || status.includes('อนุมัติ')
 }
 
 function getAllocatedDates(record) {
@@ -81,6 +86,36 @@ function getAllocatedDates(record) {
   const perDate = totalDays / usableDates.length
 
   return usableDates.map((date) => ({ date, days: perDate }))
+}
+
+/** Sum approved leave usage for one employee by quarter of a year. */
+export function getLeaveUsageByQuarter(records, { year, employeeCode, userId } = {}) {
+  const usage = Object.fromEntries(QUARTERS.map((quarter) => [quarter, {
+    sick: 0,
+    personal: 0,
+    vacation: 0,
+  }]))
+  const targetCodes = new Set([employeeCode, userId].map(normalizeCode).filter(Boolean))
+  if (!targetCodes.size || !year) return usage
+
+  for (const record of Array.isArray(records) ? records : []) {
+    if (
+      record.year !== year
+      || record.syncStatus === 'missing'
+      || ![record.employeeCode, record.userId].some((value) => targetCodes.has(normalizeCode(value)))
+      || !isApproved(record)
+    ) continue
+
+    const leaveType = getLeaveType(record.type)
+    if (!leaveType) continue
+    for (const allocation of getAllocatedDates(record)) {
+      if (allocation.date.getUTCFullYear() !== Number(year)) continue
+      const { quarter } = getQuarterAndMonthIndex(allocation.date)
+      usage[quarter][leaveType] = roundNumber(usage[quarter][leaveType] + allocation.days)
+    }
+  }
+
+  return usage
 }
 
 function getQuarterAndMonthIndex(date) {
@@ -123,43 +158,22 @@ function emptyAggregateMonths() {
   ]
 }
 
-function calculateMonthScore(month) {
-  const value = (input) => (input === '' || input === undefined || input === null ? null : Number(input) || 0)
-  const sick = value(month.sick)
-  const personal = value(month.personal)
-  const vacation = value(month.vacation)
-  const absent = value(month.absent)
-  const warning = value(month.warning)
-  if ([sick, personal, vacation, absent, warning].every((entry) => entry === null)) return null
-
-  const sickValue = sick ?? 0
-  const personalValue = personal ?? 0
-  const vacationValue = vacation ?? 0
-  const absentValue = absent ?? 0
-  const warningValue = warning ?? 0
-  const sickDeduction = sickValue <= 5 ? 0 : sickValue <= 10 ? -1 : sickValue <= 20 ? -2 : -4
-  const personalDeduction = personalValue <= 2 ? 0 : personalValue <= 4 ? -1 : personalValue <= 6 ? -2 : -3
-  const vacationQuota = Number(month.vacationQuota) || 0
-  const vacationOver = vacationValue - vacationQuota
-  const vacationDeduction = vacationOver <= 0 ? 0 : vacationOver <= 3 ? -1 : -2
-  const absentDeduction = absentValue === 0 ? 0 : absentValue === 1 ? -3 : absentValue === 2 ? -5 : -8
-  const warningDeduction = warningValue === 0 ? 0 : warningValue === 1 ? -2 : -3
-  return Math.max(0, 20 + sickDeduction + personalDeduction + vacationDeduction + absentDeduction + warningDeduction)
-}
-
-function calculateQuarterScore(months) {
-  const scores = ['M1', 'M2', 'M3'].map((key) => calculateMonthScore(months[key])).filter((score) => score !== null)
-  if (!scores.length) return null
-  return Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 100) / 100
-}
-
 function makeUserMap(users) {
   const map = new Map()
   for (const user of Array.isArray(users) ? users : []) {
-    const code = normalizeCode(user.staffCode)
-    if (code && (user.uid || user.id) && !map.has(code)) map.set(code, user)
+    const keys = [user.staffCode, user.employee_id, user.employeeId, user.uid, user.id]
+      .map(normalizeCode)
+      .filter(Boolean)
+    for (const key of keys) {
+      if (!map.has(key)) map.set(key, user)
+    }
   }
   return map
+}
+
+function getMatchedUser(usersByCode, record) {
+  return usersByCode.get(normalizeCode(record.employeeCode))
+    || usersByCode.get(normalizeCode(record.userId))
 }
 
 function sourceKey(record) {
@@ -188,7 +202,7 @@ export function mergeLeaveSyncRecords(existingRecords, incomingRecords, options 
     const key = sourceKey(incoming)
     incomingKeys.add(key)
     const existing = byKey.get(key)
-    const matched = usersByCode.has(normalizeCode(incoming.employeeCode))
+    const matched = Boolean(getMatchedUser(usersByCode, incoming))
     const syncStatus = matched ? 'synced' : 'unmatched'
     const unchanged = existing?.fingerprint === incoming.fingerprint && existing?.syncStatus === syncStatus
 
@@ -238,7 +252,7 @@ function aggregateLeaveRecords(records, users, year, sourceCollection) {
       !isApproved(record)
     ) continue
 
-    const user = usersByCode.get(normalizeCode(record.employeeCode))
+    const user = getMatchedUser(usersByCode, record)
     const staffId = user?.uid || user?.id
     const leaveType = getLeaveType(record.type)
     if (!staffId || !leaveType) continue
@@ -288,9 +302,9 @@ function applyImportedMonths(existingMonths, aggregateMonths, fillEmptyWithZero 
   return months
 }
 
-function updateEvaluationRecord(record, quarter, aggregateMonths, now, sourceCollection, sourceCount, fillEmptyWithZero = false) {
+function updateEvaluationRecord(record, quarter, aggregateMonths, now, sourceCollection, sourceCount, fillEmptyWithZero = false, disciplineRules) {
   const months = applyImportedMonths(record?.months, aggregateMonths, fillEmptyWithZero)
-  const score = calculateQuarterScore(months)
+  const score = calculateConfiguredQuarterScore(months, disciplineRules)
   return {
     ...(record || {}),
     year: record?.year,
@@ -320,15 +334,20 @@ export function applyLeaveSyncToEvaluations({
   currentUserId,
   now = new Date().toISOString(),
   fullSync = false,
+  disciplineRules,
 }) {
   const next = Array.isArray(evaluations) ? evaluations.map((record) => ({ ...record })) : []
   const { grouped, affectedStaffIds } = aggregateLeaveRecords(records, users, year, sourceCollection)
   const usersByCode = makeUserMap(users)
 
-  // On a full sync, recalculate all known staff so a removed/cancelled source
-  // document can clear values previously imported by this integration.
+  // On a full sync, recalculate every person supplied by the Discipline page
+  // so a removed/cancelled source document can clear imported values and a
+  // person with no leave can receive a full-score baseline.
+  const syncableUsers = fullSync
+    ? (Array.isArray(users) ? users : []).filter((user) => user.uid || user.id)
+    : []
   if (fullSync) {
-    for (const user of Array.isArray(users) ? users : []) {
+    for (const user of syncableUsers) {
       const staffId = user.uid || user.id
       if (staffId) affectedStaffIds.add(staffId)
     }
@@ -337,7 +356,7 @@ export function applyLeaveSyncToEvaluations({
   const sourceCountByStaff = new Map()
   for (const record of records) {
     if (record.year !== year || record.sourceCollection !== sourceCollection || record.syncStatus === 'missing') continue
-    const user = usersByCode.get(normalizeCode(record.employeeCode))
+    const user = getMatchedUser(usersByCode, record)
     const staffId = user?.uid || user?.id
     if (staffId) sourceCountByStaff.set(staffId, (sourceCountByStaff.get(staffId) || 0) + 1)
   }
@@ -362,6 +381,8 @@ export function applyLeaveSyncToEvaluations({
       now,
       sourceCollection,
       sourceCountByStaff.get(record.staffId) || 0,
+      false,
+      disciplineRules,
     )
   }
 
@@ -369,9 +390,6 @@ export function applyLeaveSyncToEvaluations({
   // Employees without approved leave still get zero leave values and therefore
   // a full score, while manually maintained absent/warning fields are kept.
   if (fullSync) {
-    const syncableUsers = (Array.isArray(users) ? users : [])
-      .filter((user) => normalizeCode(user.staffCode) && (user.uid || user.id))
-
     for (const user of syncableUsers) {
       const staffId = user.uid || user.id
       for (const quarter of QUARTERS) {
@@ -389,6 +407,7 @@ export function applyLeaveSyncToEvaluations({
             sourceCollection,
             sourceCount,
             true,
+            disciplineRules,
           )
           : updateEvaluationRecord({
             id: `eval_${Date.now()}_${staffId}_${quarter}`,
@@ -398,9 +417,7 @@ export function applyLeaveSyncToEvaluations({
             staffId,
             evaluatorId: currentUserId || 'leave-sync',
             evaluatorRole: 'HR',
-            hrmApproved: false,
-            hrmRemark: '',
-          }, quarter, aggregate?.months || emptyAggregateMonths(), now, sourceCollection, sourceCount, true)
+          }, quarter, aggregate?.months || emptyAggregateMonths(), now, sourceCollection, sourceCount, true, disciplineRules)
 
         if (existingIndex >= 0) next[existingIndex] = updatedRecord
         else next.push(updatedRecord)
@@ -423,6 +440,7 @@ export function applyLeaveSyncToEvaluations({
         sourceCollection,
         sourceCount,
         fullSync,
+        disciplineRules,
       )
       continue
     }
@@ -435,12 +453,10 @@ export function applyLeaveSyncToEvaluations({
       staffId: aggregate.staffId,
       evaluatorId: currentUserId || 'leave-sync',
       evaluatorRole: 'HR',
-      hrmApproved: false,
-      hrmRemark: '',
-    }, aggregate.quarter, aggregate.months, now, sourceCollection, sourceCount))
+    }, aggregate.quarter, aggregate.months, now, sourceCollection, sourceCount, false, disciplineRules))
   }
 
-  return { evaluations: next, affectedStaffIds, grouped }
+  return { evaluations: next, affectedStaffIds, grouped, syncedStaffCount: syncableUsers.length }
 }
 
-export { calculateQuarterScore, getLeaveType }
+export { calculateConfiguredMonthScore as calculateMonthScore, calculateConfiguredQuarterScore as calculateQuarterScore, getLeaveType }

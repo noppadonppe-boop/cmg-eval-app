@@ -3,8 +3,18 @@ import { useApp } from '../../context/AppContext'
 import useRBAC, { ROLE_AVATAR_BG } from '../../hooks/useRBAC'
 import {
   CheckCircle2, Save, Shield, ChevronDown, ChevronUp,
-  ThumbsUp, ThumbsDown, Info, Lock
+  Info, Lock
 } from 'lucide-react'
+import {
+  calculateMonthScore,
+  calculateQuarterScore,
+  getCategoryMeta,
+  getDisciplineBreakdown,
+  getDisciplineRulesForYear,
+  getRulesForCategory,
+  formatRuleRange,
+} from '../../utils/disciplineRules'
+import { getLeaveUsageByQuarter } from '../../services/leaveSyncUtils'
 
 /**
  * Each month starts at 20 pts. HR enters actual usage counts → system deducts automatically.
@@ -19,67 +29,13 @@ import {
  * Total max deduction = 4+3+2+8+3 = 20 → score range 0–20
  */
 
-const DEDUCTION_RULES = {
-  sick: (d) => d <= 5 ? 0 : d <= 10 ? -1 : d <= 20 ? -2 : -4,
-  personal: (d) => d <= 2 ? 0 : d <= 4 ? -1 : d <= 6 ? -2 : -3,
-  vacation: (d, quota) => {
-    const over = d - quota
-    return over <= 0 ? 0 : over <= 3 ? -1 : -2
-  },
-  absent: (d) => d === 0 ? 0 : d === 1 ? -3 : d === 2 ? -5 : -8,
-  warning: (n) => n === 0 ? 0 : n === 1 ? -2 : -3,
+const CRITERIA_HINTS = {
+  sick: 'โควต้าประมาณ 30 วัน/ปี',
+  personal: 'โควต้าประมาณ 6 วัน/ปี',
+  vacation: 'ใช้จำนวนวันที่เกินโควต้าพักร้อนของพนักงาน',
+  absent: 'ขาดโดยไม่แจ้งลา',
+  warning: 'ใบเตือนจากการกระทำผิดวินัย',
 }
-
-const CRITERIA_TABLE = [
-  {
-    key: 'sick', label: 'ลาป่วย', unit: 'วัน', quota: 30,
-    hint: 'โควต้า ≤30 วัน/ปี',
-    rules: [
-      { range: '0 – 5 วัน',  deduct: 0,  label: 'ปกติ' },
-      { range: '6 – 10 วัน', deduct: -1, label: '-1 คะแนน' },
-      { range: '11 – 20 วัน',deduct: -2, label: '-2 คะแนน' },
-      { range: '> 20 วัน',   deduct: -4, label: '-4 คะแนน' },
-    ],
-  },
-  {
-    key: 'personal', label: 'ลากิจ', unit: 'วัน', quota: 6,
-    hint: 'โควต้า ≤6 วัน/ปี',
-    rules: [
-      { range: '0 – 2 วัน',  deduct: 0,  label: 'ปกติ' },
-      { range: '3 – 4 วัน',  deduct: -1, label: '-1 คะแนน' },
-      { range: '5 – 6 วัน',  deduct: -2, label: '-2 คะแนน' },
-      { range: '> 6 วัน',    deduct: -3, label: '-3 คะแนน' },
-    ],
-  },
-  {
-    key: 'vacation', label: 'ลาพักร้อน', unit: 'วัน', quota: null,
-    hint: 'โควต้าขึ้นอยู่กับแต่ละบุคคล (HR กรอก)',
-    rules: [
-      { range: '≤ โควต้า',       deduct: 0,  label: 'ปกติ' },
-      { range: 'เกิน 1 – 3 วัน', deduct: -1, label: '-1 คะแนน' },
-      { range: 'เกิน > 3 วัน',   deduct: -2, label: '-2 คะแนน' },
-    ],
-  },
-  {
-    key: 'absent', label: 'ขาดงาน (ไม่ลา)', unit: 'ครั้ง', quota: 0,
-    hint: 'ขาดโดยไม่แจ้งลา',
-    rules: [
-      { range: '0 ครั้ง',  deduct: 0,  label: 'ปกติ' },
-      { range: '1 ครั้ง',  deduct: -3, label: '-3 คะแนน' },
-      { range: '2 ครั้ง',  deduct: -5, label: '-5 คะแนน' },
-      { range: '≥ 3 ครั้ง',deduct: -8, label: '-8 คะแนน' },
-    ],
-  },
-  {
-    key: 'warning', label: 'ใบเตือน', unit: 'ฉบับ', quota: 0,
-    hint: 'ใบเตือนจากการกระทำผิดวินัย',
-    rules: [
-      { range: '0 ฉบับ',  deduct: 0,  label: 'ปกติ' },
-      { range: '1 ฉบับ',  deduct: -2, label: '-2 คะแนน' },
-      { range: '≥ 2 ฉบับ',deduct: -3, label: '-3 คะแนน' },
-    ],
-  },
-]
 
 const MONTHS_IN_QUARTER = {
   Q1: ['มกราคม',  'กุมภาพันธ์', 'มีนาคม'],
@@ -98,43 +54,15 @@ const BLANK_MONTH = (vacationQuota = 0) => ({
   note: '',
 })
 
-function calcMonthScore(m) {
-  const s = (v) => (v === '' || v === undefined ? null : Number(v))
-  const sick     = s(m.sick)
-  const personal = s(m.personal)
-  const vacation = s(m.vacation)
-  const absent   = s(m.absent)
-  const warning  = s(m.warning)
-  const quota    = Number(m.vacationQuota) || 0
-
-  if ([sick, personal, vacation, absent, warning].every((v) => v === null)) return null
-
-  const ded =
-    DEDUCTION_RULES.sick(sick ?? 0) +
-    DEDUCTION_RULES.personal(personal ?? 0) +
-    DEDUCTION_RULES.vacation(vacation ?? 0, quota) +
-    DEDUCTION_RULES.absent(absent ?? 0) +
-    DEDUCTION_RULES.warning(warning ?? 0)
-
-  return Math.max(0, 20 + ded)
+function formatLeaveDays(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '0'
+  return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(2)))
 }
 
-function deductionBreakdown(m) {
-  const s = (v) => (v === '' || v === undefined ? 0 : Number(v))
-  const quota = Number(m.vacationQuota) || 0
-  return [
-    { label: 'ลาป่วย',         val: s(m.sick),     ded: DEDUCTION_RULES.sick(s(m.sick)) },
-    { label: 'ลากิจ',          val: s(m.personal), ded: DEDUCTION_RULES.personal(s(m.personal)) },
-    { label: 'ลาพักร้อน',      val: s(m.vacation), ded: DEDUCTION_RULES.vacation(s(m.vacation), quota) },
-    { label: 'ขาดงาน (ไม่ลา)', val: s(m.absent),   ded: DEDUCTION_RULES.absent(s(m.absent)) },
-    { label: 'ใบเตือน',        val: s(m.warning),  ded: DEDUCTION_RULES.warning(s(m.warning)) },
-  ]
-}
-
-function MonthCard({ monthName, monthIdx, data, onUpdate, disabled }) {
-  const [open, setOpen] = useState(monthIdx === 0)
-  const score = calcMonthScore(data)
-  const breakdown = deductionBreakdown(data)
+function MonthCard({ monthName, data, onUpdate, disabled, rules }) {
+  const score = calculateMonthScore(data, rules)
+  const breakdown = getDisciplineBreakdown(data, rules)
   const totalDed = breakdown.reduce((s, b) => s + b.ded, 0)
 
   const scoreColor =
@@ -147,13 +75,10 @@ function MonthCard({ monthName, monthIdx, data, onUpdate, disabled }) {
 
   return (
     <div className={`rounded-xl border transition-all ${score === null ? 'border-gray-200 bg-white' : score >= 18 ? 'border-green-200 bg-green-50' : score >= 14 ? 'border-yellow-200 bg-yellow-50' : 'border-red-200 bg-red-50'}`}>
-      {/* Month header */}
-      <button
-        className="w-full flex items-center justify-between px-4 py-3 text-left"
-        onClick={() => setOpen((v) => !v)}
-      >
+      {/* Month header — details are always visible so HR can compare all months at once. */}
+      <div className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left">
         <div className="flex items-center gap-2.5">
-          <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{monthName}</span>
+          <span className="text-sm font-bold text-gray-700">{monthName}</span>
           {score !== null && (
             <span className={`text-sm font-extrabold ${scoreColor}`}>{score} / 20</span>
           )}
@@ -163,12 +88,10 @@ function MonthCard({ monthName, monthIdx, data, onUpdate, disabled }) {
           {totalDed < 0 && (
             <span className="text-xs text-red-600 font-semibold bg-red-100 px-2 py-0.5 rounded-full">{totalDed} pts</span>
           )}
-          {open ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
         </div>
-      </button>
+      </div>
 
-      {open && (
-        <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
+      <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
           {/* Vacation quota (HR sets per staff) */}
           <div className="flex items-center gap-3 flex-wrap">
             <label className="text-xs font-semibold text-gray-600 shrink-0">โควต้าลาพักร้อน (วัน):</label>
@@ -193,17 +116,28 @@ function MonthCard({ monthName, monthIdx, data, onUpdate, disabled }) {
             ].map((f) => {
               const ded = breakdown.find((b) => b.label.startsWith(f.label.split(' ')[0]))?.ded ?? 0
               const hasDeduction = ded < 0
+              const displayValue = data[f.key] === '' || data[f.key] === undefined || data[f.key] === null ? 0 : data[f.key]
               return (
                 <div key={f.key} className={`rounded-lg border p-2.5 ${hasDeduction ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-white'}`}>
-                  <label className="text-[11px] font-semibold text-gray-600 block mb-1.5">{f.label}</label>
+                  <div className="flex items-start justify-between gap-1.5 mb-1.5">
+                    <label className="text-[11px] font-semibold text-gray-600 leading-tight">{f.label}</label>
+                    <span className={`text-sm font-extrabold leading-none ${hasDeduction ? 'text-red-700' : 'text-gray-700'}`}>
+                      {displayValue}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-1.5">
                     <input
                       type="number" min={0} max={f.max}
-                      value={data[f.key]}
+                      value={displayValue}
                       disabled={disabled}
                       onChange={(e) => set(f.key, e.target.value)}
                       placeholder={f.placeholder}
-                      className={`w-full px-2 py-1.5 text-sm rounded-md border focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-50 disabled:text-gray-400 ${hasDeduction ? 'border-red-300 bg-white' : 'border-gray-200'}`}
+                      style={{
+                        color: hasDeduction ? '#b91c1c' : '#374151',
+                        WebkitTextFillColor: hasDeduction ? '#b91c1c' : '#374151',
+                        opacity: 1,
+                      }}
+                      className={`w-full px-2 py-1.5 text-sm font-medium text-center rounded-md border focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-50 ${hasDeduction ? 'border-red-300 bg-white' : 'border-gray-200'}`}
                     />
                     <span className="text-[10px] text-gray-400 shrink-0">{f.unit}</span>
                   </div>
@@ -243,14 +177,14 @@ function MonthCard({ monthName, monthIdx, data, onUpdate, disabled }) {
             placeholder="หมายเหตุเพิ่มเติม (เช่น รายละเอียดใบเตือน หรือสาเหตุการขาดงาน)..."
             className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-50 placeholder:text-gray-300"
           />
-        </div>
-      )}
+      </div>
     </div>
   )
 }
 
-function CriteriaGuide() {
+function CriteriaGuide({ rules }) {
   const [open, setOpen] = useState(false)
+
   return (
     <div className="rounded-xl border border-indigo-200 bg-indigo-50 overflow-hidden">
       <button
@@ -263,22 +197,32 @@ function CriteriaGuide() {
       </button>
       {open && (
         <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {CRITERIA_TABLE.map((c) => (
-            <div key={c.key} className="bg-white rounded-lg border border-indigo-100 p-3">
-              <p className="text-xs font-bold text-indigo-700 mb-0.5">{c.label}</p>
-              <p className="text-[10px] text-gray-400 mb-2">{c.hint}</p>
+          {['sick', 'personal', 'vacation', 'absent', 'warning'].map((key) => {
+            const meta = getCategoryMeta(key)
+            const categoryRules = getRulesForCategory(rules, key)
+            return (
+            <div key={key} className="bg-white rounded-lg border border-indigo-100 p-3">
+              <p className="text-xs font-bold text-indigo-700 mb-0.5">{meta.label}</p>
+              <p className="text-[10px] text-gray-400 mb-2">{CRITERIA_HINTS[key]}</p>
               <table className="w-full text-[11px]">
                 <tbody>
-                  {c.rules.map((r, i) => (
-                    <tr key={i} className={r.deduct < 0 ? 'text-red-600' : 'text-green-600'}>
-                      <td className="py-0.5 pr-2">{r.range}</td>
-                      <td className="py-0.5 font-semibold text-right">{r.label}</td>
+                  {categoryRules.length > 0 && (
+                    <tr className="text-green-600">
+                      <td className="py-0.5 pr-2">{meta.valueMode === 'overQuota' ? '≤ โควต้า' : `≤ ${categoryRules[0].threshold} ${meta.unit}`}</td>
+                      <td className="py-0.5 font-semibold text-right">ปกติ</td>
+                    </tr>
+                  )}
+                  {categoryRules.map((rule) => (
+                    <tr key={rule.id} className={rule.deduction < 0 ? 'text-red-600' : 'text-green-600'}>
+                      <td className="py-0.5 pr-2">{formatRuleRange(rule)}</td>
+                      <td className="py-0.5 font-semibold text-right">{rule.deduction < 0 ? `${rule.deduction} คะแนน` : 'ปกติ'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          ))}
+            )
+          })}
           <div className="sm:col-span-2 bg-indigo-100 rounded-lg px-3 py-2 text-[11px] text-indigo-700">
             <strong>สูตรคำนวณ:</strong> คะแนนแต่ละเดือน = 20 – ผลรวมการหักคะแนน (ขั้นต่ำ 0) <br />
             <strong>คะแนน Part 2 (ต่อ Quarter)</strong> = ค่าเฉลี่ยของ 3 เดือน → สูงสุด 20 คะแนน
@@ -301,29 +245,29 @@ function buildInitial(existing) {
 }
 
 export default function Part2Discipline({ staffId, quarter, year, staffOverride = null }) {
-  const { currentUser, saveEvaluation, getEvaluationForPart, getUserById } = useApp()
-  const { role, can } = useRBAC()
+  const { data: appData, currentUser, saveEvaluation, getEvaluationForPart, getUserById } = useApp()
+  const { can } = useRBAC()
   const canEdit = can('canInputDiscipline')
-  const canApprove = role === 'MD'
+  const disciplineRules = getDisciplineRulesForYear(appData, year)
   const existing = getEvaluationForPart(year, quarter, staffId, 'part2')
-
   const [months, setMonths] = useState(() => buildInitial(existing))
-  const [hrmApproved, setHrmApproved] = useState(existing?.hrmApproved ?? false)
-  const [hrmRemark, setHrmRemark] = useState(existing?.hrmRemark ?? '')
   const [saved, setSaved] = useState(!!existing)
 
   const staff = staffOverride || getUserById(staffId)
-  const readOnly = !canEdit && !canApprove
+  const readOnly = !canEdit
+  const leaveUsageByQuarter = getLeaveUsageByQuarter(appData?.leaveSyncRecords, {
+    year,
+    employeeCode: staff?.staffCode || staff?.employee_id || staff?.employeeId,
+    userId: staff?.uid || staff?.id || staffId,
+  })
 
-  // โหลดข้อมูล Part 2 ที่ HR กรอก (เมื่อเป็น readOnly และมี existing จาก getEvaluationForPart)
+  // โหลดข้อมูล Part 2 ที่ HR กรอกเมื่อมีข้อมูลเดิมจาก getEvaluationForPart
   useEffect(() => {
-    if ((readOnly || canEdit || canApprove) && existing) {
+    if (existing) {
       setMonths(buildInitial(existing))
-      setHrmApproved(existing.hrmApproved ?? false)
-      setHrmRemark(existing.hrmRemark ?? '')
       setSaved(true)
     }
-  }, [readOnly, existing?.id, staffId, quarter, year])
+  }, [existing, staffId, quarter, year])
 
   const monthNames = MONTHS_IN_QUARTER[quarter] || ['เดือน 1', 'เดือน 2', 'เดือน 3']
 
@@ -332,10 +276,8 @@ export default function Part2Discipline({ staffId, quarter, year, staffOverride 
     setMonths((p) => ({ ...p, [key]: val }))
   }
 
-  const scores3 = ['M1', 'M2', 'M3'].map((k) => calcMonthScore(months[k])).filter((s) => s !== null)
-  const quarterScore = scores3.length > 0
-    ? Math.round((scores3.reduce((a, b) => a + b, 0) / scores3.length) * 100) / 100
-    : null
+  const scores3 = ['M1', 'M2', 'M3'].map((k) => calculateMonthScore(months[k], disciplineRules)).filter((s) => s !== null)
+  const quarterScore = calculateQuarterScore(months, disciplineRules)
 
   const handleSave = () => {
     const evaluatorId = existing?.evaluatorId ?? currentUser.id
@@ -345,25 +287,6 @@ export default function Part2Discipline({ staffId, quarter, year, staffOverride 
       evaluatorRole: 'HR',
       part: 'part2',
       months,
-      hrmApproved,
-      hrmRemark,
-      scaledScore: quarterScore,
-      rawTotal: quarterScore,
-    })
-    setSaved(true)
-  }
-
-  const handleApprove = (approve) => {
-    setHrmApproved(approve)
-    const evaluatorId = existing?.evaluatorId ?? currentUser.id
-    saveEvaluation({
-      year, quarter, staffId,
-      evaluatorId,
-      evaluatorRole: 'HR',
-      part: 'part2',
-      months,
-      hrmApproved: approve,
-      hrmRemark,
       scaledScore: quarterScore,
       rawTotal: quarterScore,
     })
@@ -389,7 +312,7 @@ export default function Part2Discipline({ staffId, quarter, year, staffOverride 
             <div className="flex items-center gap-1.5 mt-0.5">
               <Shield size={11} className="text-green-600" />
               <p className="text-xs text-green-700 font-medium">
-                Part 2 — วินัย (HR กรอก / HRM อนุมัติ)
+                Part 2 — วินัย (HR กรอก / ใช้ผลจากการ Sync)
                 {readOnly && <span className="ml-1.5 text-gray-500 font-normal">· ดูได้อย่างเดียว</span>}
               </p>
             </div>
@@ -403,17 +326,55 @@ export default function Part2Discipline({ staffId, quarter, year, staffOverride 
               <span className="text-sm font-medium text-gray-400 ml-1">/ 20</span>
             </p>
           </div>
-          {/* HRM Approval status badge */}
-          {hrmApproved && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
-              <Lock size={11} /> อนุมัติแล้ว
+        </div>
+      </div>
+
+      {/* Criteria guide — always visible for quick reference. */}
+      <CriteriaGuide rules={disciplineRules} />
+
+      {/* Read-only leave usage by quarter imported from the leave system. */}
+      <div className="rounded-xl border border-indigo-200 bg-white overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-indigo-100 bg-indigo-50">
+          <div>
+            <p className="text-xs font-bold text-indigo-800">สรุปการใช้วันลาจาก Leave</p>
+            <p className="text-[10px] text-indigo-600 mt-0.5">ปี {year} · แสดงจำนวนวันที่ลาอนุมัติแยกตาม Quarter</p>
+          </div>
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white border border-indigo-200 text-[10px] font-semibold text-indigo-700">
+            <Lock size={10} /> Readonly
+          </span>
+        </div>
+        <div className="p-3">
+          {appData?.leaveSyncMeta?.[String(year)]?.status === 'synced' ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {[
+                { key: 'sick', label: 'ลาป่วย', cardClass: 'border-blue-200 bg-blue-50', labelClass: 'text-blue-700' },
+                { key: 'personal', label: 'ลากิจ', cardClass: 'border-amber-200 bg-amber-50', labelClass: 'text-amber-700' },
+                { key: 'vacation', label: 'ลาพักร้อน', cardClass: 'border-emerald-200 bg-emerald-50', labelClass: 'text-emerald-700' },
+              ].map((item) => {
+                const usedByQuarter = ['Q1', 'Q2', 'Q3', 'Q4'].map((quarterKey) => ({
+                  quarter: quarterKey,
+                  days: Number(leaveUsageByQuarter[quarterKey]?.[item.key]) || 0,
+                }))
+                return (
+                <div key={item.key} className={`rounded-lg border px-3 py-2.5 ${item.cardClass}`}>
+                  <p className={`text-[11px] font-semibold ${item.labelClass}`}>{item.label}</p>
+                  <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-gray-600">
+                    {usedByQuarter.map((entry) => (
+                      <p key={entry.quarter}>{entry.quarter}: <strong>{formatLeaveDays(entry.days)} วัน</strong></p>
+                    ))}
+                  </div>
+                </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-xs text-gray-500">
+              <Info size={14} className="text-gray-400 shrink-0" />
+              ยังไม่มีข้อมูลการลา กรุณากด Sync Leave Data ก่อน
             </div>
           )}
         </div>
       </div>
-
-      {/* Criteria guide (collapsible) */}
-      <CriteriaGuide />
 
       {/* แจ้ง Supervisor/Staff ว่าดูได้อย่างเดียว */}
       {readOnly && (
@@ -424,7 +385,7 @@ export default function Part2Discipline({ staffId, quarter, year, staffOverride 
       )}
 
       {/* HR save / edit buttons */}
-      {canEdit && !hrmApproved && !readOnly && (
+      {canEdit && (
         <div className="flex gap-2 justify-end">
           {saved && (
             <button
@@ -445,27 +406,24 @@ export default function Part2Discipline({ staffId, quarter, year, staffOverride 
       )}
 
       {saved && (
-        <div className={`flex items-center gap-2 px-4 py-3 rounded-xl border ${hrmApproved ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'}`}>
-          <CheckCircle2 size={15} className={hrmApproved ? 'text-green-600' : 'text-blue-500'} />
-          <p className={`text-sm font-medium ${hrmApproved ? 'text-green-700' : 'text-blue-700'}`}>
-            {hrmApproved
-              ? <>คะแนน Part 2 อนุมัติแล้ว — <strong>{quarterScore} / 20</strong></>
-              : <>บันทึกข้อมูลแล้ว — รอ HRM อนุมัติ · คะแนนเบื้องต้น: <strong>{quarterScore} / 20</strong></>
-            }
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl border bg-blue-50 border-blue-200">
+          <CheckCircle2 size={15} className="text-blue-500" />
+          <p className="text-sm font-medium text-blue-700">
+            บันทึกข้อมูลแล้ว — คะแนนปัจจุบัน: <strong>{quarterScore} / 20</strong>
           </p>
         </div>
       )}
 
-      {/* 3 month cards */}
-      <div className="space-y-3">
+      {/* 3 month cards — all months stay open for quick comparison and direct entry. */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
         {(['M1', 'M2', 'M3']).map((mk, idx) => (
           <MonthCard
             key={mk}
-            monthIdx={idx}
             monthName={monthNames[idx]}
             data={months[mk]}
             onUpdate={(val) => updateMonth(mk, val)}
-            disabled={readOnly || !canEdit || hrmApproved}
+            disabled={readOnly || !canEdit}
+            rules={disciplineRules}
           />
         ))}
       </div>
@@ -476,7 +434,7 @@ export default function Part2Discipline({ staffId, quarter, year, staffOverride 
           <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">สรุปคะแนน Quarter {quarter}</p>
           <div className="flex items-center gap-3 mb-3">
             {(['M1', 'M2', 'M3']).map((mk, idx) => {
-              const s = calcMonthScore(months[mk])
+              const s = calculateMonthScore(months[mk], disciplineRules)
               return (
                 <div key={mk} className="flex-1 text-center">
                   <p className="text-[10px] text-gray-400">{monthNames[idx]}</p>
@@ -503,55 +461,6 @@ export default function Part2Discipline({ staffId, quarter, year, staffOverride 
         </div>
       )}
 
-      {/* HRM approval section (เฉพาะ HR/HRM ไม่แสดงในโหมด read-only) */}
-      {saved && !hrmApproved && !readOnly && (canApprove || canEdit) && (
-        <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <Shield size={14} className="text-amber-600" />
-            <p className="text-sm font-semibold text-amber-800">การอนุมัติโดย HRM (MD)</p>
-          </div>
-          <p className="text-xs text-amber-700">ตรวจสอบข้อมูลและอนุมัติหรือส่งกลับแก้ไข</p>
-          <textarea
-            rows={2}
-            value={hrmRemark}
-            onChange={(e) => setHrmRemark(e.target.value)}
-            placeholder="หมายเหตุของ HRM (ถ้ามี)..."
-            className="w-full px-3 py-2 text-sm rounded-lg border border-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder:text-gray-300 resize-none"
-          />
-          {canApprove && (
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleApprove(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700"
-              >
-                <ThumbsUp size={13} /> อนุมัติ
-              </button>
-              <button
-                onClick={() => { setHrmApproved(false); setSaved(false) }}
-                className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 border border-red-200 text-sm font-medium rounded-lg hover:bg-red-100"
-              >
-                <ThumbsDown size={13} /> ส่งกลับแก้ไข
-              </button>
-            </div>
-          )}
-          {!canApprove && (
-            <p className="text-xs text-amber-600 flex items-center gap-1">
-              <Lock size={11} /> รอ MD (HRM) เข้าสู่ระบบเพื่ออนุมัติ
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Approved remark display */}
-      {hrmApproved && hrmRemark && (
-        <div className="flex items-start gap-2 px-4 py-3 rounded-xl bg-green-50 border border-green-200">
-          <CheckCircle2 size={13} className="text-green-600 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-xs font-semibold text-green-700">หมายเหตุ HRM:</p>
-            <p className="text-xs text-green-600">{hrmRemark}</p>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
